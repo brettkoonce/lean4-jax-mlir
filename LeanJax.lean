@@ -27,6 +27,7 @@ inductive Layer where
   | flatten
   | dense   (fanIn fanOut : Nat) (act : Activation)
   | residualBlock (ic oc nBlocks firstStride : Nat)
+  | bottleneckBlock (ic oc nBlocks firstStride : Nat)
 deriving Repr
 
 structure NetSpec where
@@ -68,22 +69,34 @@ def Layer.nParams : Layer → Nat
         then (oc * ic * 3 * 3 + 2 * oc) + (oc * oc * 3 * 3 + 2 * oc) + (oc * ic * 1 * 1 + 2 * oc)
         else idBlock
       firstBlock + (n - 1) * idBlock
+  | .bottleneckBlock ic oc n fs =>
+      let mid := oc / 4
+      let needsProj := !(ic == oc && fs == 1)
+      let idBlock := (mid * oc * 1 + 2 * mid) + (mid * mid * 9 + 2 * mid) + (oc * mid * 1 + 2 * oc)
+      let firstBlock := if needsProj
+        then (mid * ic * 1 + 2 * mid) + (mid * mid * 9 + 2 * mid) + (oc * mid * 1 + 2 * oc) +
+             (oc * ic * 1 + 2 * oc)
+        else idBlock
+      firstBlock + (n - 1) * idBlock
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
   s.layers.foldl (fun acc l => acc + l.nParams) 0
 
 def NetSpec.hasConv (s : NetSpec) : Bool :=
-  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | _ => false
+  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasPool (s : NetSpec) : Bool :=
   s.layers.any fun | .maxPool .. => true | _ => false
 
 def NetSpec.hasBn (s : NetSpec) : Bool :=
-  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | _ => false
+  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasResidual (s : NetSpec) : Bool :=
-  s.layers.any fun | .residualBlock .. => true | _ => false
+  s.layers.any fun | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
+
+def NetSpec.hasBottleneck (s : NetSpec) : Bool :=
+  s.layers.any fun | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasGlobalAvgPool (s : NetSpec) : Bool :=
   s.layers.any fun | .globalAvgPool => true | _ => false
@@ -104,7 +117,8 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .dense fi fo act           =>
       let a := match act with | .relu => ",ReLU" | .identity => ""
       s!"{fi}→{fo}{a}"
-    | .residualBlock ic oc n fs  => s!"Res{n}({ic}→{oc},s{fs})")
+    | .residualBlock ic oc n fs   => s!"Res{n}({ic}→{oc},s{fs})"
+    | .bottleneckBlock ic oc n fs => s!"BN{n}({ic}→{oc},s{fs})")
 
 -- ===========================================================================
 -- § 3  JAX Code Generator
@@ -221,6 +235,23 @@ private def emitHelpers (spec : NetSpec) : String := Id.run do
       "    out = conv_bn(out, params[idx+1][0], params[idx+1][1], params[idx+1][2])\n" ++
       "    shortcut = conv_bn(x, params[idx+2][0], params[idx+2][1], params[idx+2][2], stride=(stride,stride))\n" ++
       "    return jax.nn.relu(out + shortcut)\n\n"
+  if spec.hasBottleneck then
+    code := code ++
+      "def bottleneck_block(params, x, idx):\n" ++
+      "    out = conv_bn(x, params[idx][0], params[idx][1], params[idx][2])\n" ++
+      "    out = jax.nn.relu(out)\n" ++
+      "    out = conv_bn(out, params[idx+1][0], params[idx+1][1], params[idx+1][2])\n" ++
+      "    out = jax.nn.relu(out)\n" ++
+      "    out = conv_bn(out, params[idx+2][0], params[idx+2][1], params[idx+2][2])\n" ++
+      "    return jax.nn.relu(out + x)\n\n" ++
+      "def bottleneck_block_down(params, x, idx, stride):\n" ++
+      "    out = conv_bn(x, params[idx][0], params[idx][1], params[idx][2])\n" ++
+      "    out = jax.nn.relu(out)\n" ++
+      "    out = conv_bn(out, params[idx+1][0], params[idx+1][1], params[idx+1][2], stride=(stride,stride))\n" ++
+      "    out = jax.nn.relu(out)\n" ++
+      "    out = conv_bn(out, params[idx+2][0], params[idx+2][1], params[idx+2][2])\n" ++
+      "    shortcut = conv_bn(x, params[idx+3][0], params[idx+3][1], params[idx+3][2], stride=(stride,stride))\n" ++
+      "    return jax.nn.relu(out + shortcut)\n\n"
   if spec.hasGlobalAvgPool then
     code := code ++
       "def global_avg_pool(x):\n" ++
@@ -277,6 +308,22 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
       for _ in List.range (n - 1) do
         code := code ++ emitConvBnInit s!"ResBlock conv1 {oc}→{oc}" oc oc 3
         code := code ++ emitConvBnInit s!"ResBlock conv2 {oc}→{oc}" oc oc 3
+    | .bottleneckBlock ic oc n fs =>
+      let mid := oc / 4
+      let needsProj := !(ic == oc && fs == 1)
+      if needsProj then
+        code := code ++ emitConvBnInit s!"Bottleneck ↓ 1x1 {ic}→{mid}" ic mid 1
+        code := code ++ emitConvBnInit s!"Bottleneck ↓ 3x3 {mid}→{mid}" mid mid 3
+        code := code ++ emitConvBnInit s!"Bottleneck ↓ 1x1 {mid}→{oc}" mid oc 1
+        code := code ++ emitConvBnInit s!"Bottleneck ↓ proj {ic}→{oc}" ic oc 1
+      else
+        code := code ++ emitConvBnInit s!"Bottleneck 1x1 {oc}→{mid}" oc mid 1
+        code := code ++ emitConvBnInit s!"Bottleneck 3x3 {mid}→{mid}" mid mid 3
+        code := code ++ emitConvBnInit s!"Bottleneck 1x1 {mid}→{oc}" mid oc 1
+      for _ in List.range (n - 1) do
+        code := code ++ emitConvBnInit s!"Bottleneck 1x1 {oc}→{mid}" oc mid 1
+        code := code ++ emitConvBnInit s!"Bottleneck 3x3 {mid}→{mid}" mid mid 3
+        code := code ++ emitConvBnInit s!"Bottleneck 1x1 {mid}→{oc}" mid oc 1
     | _ => pure ()
   code := code ++ "    return params\n\n"
   code
@@ -331,6 +378,17 @@ private def emitForward (spec : NetSpec) : String := Id.run do
       for _ in List.range (n - 1) do
         code := code ++ "    x = basic_block(params, x, " ++ toString pidx ++ ")\n"
         pidx := pidx + 2
+    | .bottleneckBlock ic oc n fs =>
+      let needsProj := !(ic == oc && fs == 1)
+      if needsProj then
+        code := code ++ "    x = bottleneck_block_down(params, x, " ++ toString pidx ++ ", " ++ toString fs ++ ")\n"
+        pidx := pidx + 4
+      else
+        code := code ++ "    x = bottleneck_block(params, x, " ++ toString pidx ++ ")\n"
+        pidx := pidx + 3
+      for _ in List.range (n - 1) do
+        code := code ++ "    x = bottleneck_block(params, x, " ++ toString pidx ++ ")\n"
+        pidx := pidx + 3
   code := code ++ "    return x\n\n"
   code
 

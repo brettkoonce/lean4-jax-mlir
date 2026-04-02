@@ -19,3 +19,6 @@ lean_exe «cifar-cnn» where
 
 lean_exe «resnet34» where
   root := `MainResnet
+
+lean_exe «resnet50» where
+  root := `MainResnet50
