@@ -19,14 +19,13 @@ def resnet34 : NetSpec where
     .dense 512 10 .identity
   ]
 
+-- S4TF book: lr=0.002, momentum=0.9, batch=32, instance norm
+-- Scaled for 6 GPUs: batch=192 (32×6), lr=0.012 (linear scaling)
 def resnetConfig : TrainConfig where
-  learningRate := 0.05
-  batchSize    := 384
+  learningRate := 0.012
+  batchSize    := 192
   epochs       := 30
   momentum     := 0.9
-  weightDecay  := 0.0001
-  cosineDecay  := true
-  warmupEpochs := 5
 
 def main (args : List String) : IO Unit :=
   runJax resnet34 resnetConfig .imagenette
