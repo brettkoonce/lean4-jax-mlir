@@ -30,6 +30,7 @@ inductive Layer where
   | residualBlock (ic oc nBlocks firstStride : Nat)
   | bottleneckBlock (ic oc nBlocks firstStride : Nat)
   | separableConv (ic oc stride : Nat)
+  | invertedResidual (ic oc expand stride nBlocks : Nat)
 deriving Repr
 
 structure NetSpec where
@@ -84,19 +85,32 @@ def Layer.nParams : Layer → Nat
       -- depthwise 3x3: ic*9 weights + 2*ic (BN)
       -- pointwise 1x1: oc*ic weights + 2*oc (BN)
       (ic * 9 + 2 * ic) + (oc * ic + 2 * oc)
+  | .invertedResidual ic oc expand stride n =>
+      let mid := ic * expand
+      let expandP := if expand == 1 then 0 else (mid * ic + 2 * mid)  -- 1x1 expand + BN
+      let dwP := mid * 9 + 2 * mid                                     -- depthwise 3x3 + BN
+      let projP := oc * mid + 2 * oc                                   -- 1x1 project + BN
+      let firstBlock := expandP + dwP + projP
+      -- Subsequent blocks: ic becomes oc, stride=1, expand stays
+      let midR := oc * expand
+      let expandR := if expand == 1 then 0 else (midR * oc + 2 * midR)
+      let dwR := midR * 9 + 2 * midR
+      let projR := oc * midR + 2 * oc
+      let restBlock := expandR + dwR + projR
+      firstBlock + (n - 1) * restBlock
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
   s.layers.foldl (fun acc l => acc + l.nParams) 0
 
 def NetSpec.hasConv (s : NetSpec) : Bool :=
-  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | _ => false
+  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | _ => false
 
 def NetSpec.hasPool (s : NetSpec) : Bool :=
   s.layers.any fun | .maxPool .. => true | _ => false
 
 def NetSpec.hasBn (s : NetSpec) : Bool :=
-  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | _ => false
+  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | _ => false
 
 def NetSpec.hasResidual (s : NetSpec) : Bool :=
   s.layers.any fun | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
@@ -105,7 +119,10 @@ def NetSpec.hasBottleneck (s : NetSpec) : Bool :=
   s.layers.any fun | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasSeparable (s : NetSpec) : Bool :=
-  s.layers.any fun | .separableConv .. => true | _ => false
+  s.layers.any fun | .separableConv .. => true | .invertedResidual .. => true | _ => false
+
+def NetSpec.hasInvertedResidual (s : NetSpec) : Bool :=
+  s.layers.any fun | .invertedResidual .. => true | _ => false
 
 def NetSpec.hasGlobalAvgPool (s : NetSpec) : Bool :=
   s.layers.any fun | .globalAvgPool => true | _ => false
@@ -128,7 +145,8 @@ def NetSpec.archStr (s : NetSpec) : String :=
       s!"{fi}→{fo}{a}"
     | .residualBlock ic oc n fs   => s!"Res{n}({ic}→{oc},s{fs})"
     | .bottleneckBlock ic oc n fs => s!"BN{n}({ic}→{oc},s{fs})"
-    | .separableConv ic oc st     => s!"Sep({ic}→{oc},s{st})")
+    | .separableConv ic oc st        => s!"Sep({ic}→{oc},s{st})"
+    | .invertedResidual ic oc e s n  => s!"IR{n}({ic}→{oc},e{e},s{s})")
 
 -- ===========================================================================
 -- § 3  JAX Code Generator
@@ -283,6 +301,40 @@ private def emitHelpers (spec : NetSpec) : String := Id.run do
       "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
       "    x = x * pw_g.reshape(1, -1, 1, 1) + pw_b.reshape(1, -1, 1, 1)\n" ++
       "    return jnp.minimum(jax.nn.relu(x), 6.0)\n\n"
+  if spec.hasInvertedResidual then
+    code := code ++
+      "def invres_block(params, x, idx, stride, expand, use_skip):\n" ++
+      "    \"\"\"Inverted residual: expand 1x1 → depthwise 3x3 → project 1x1, + skip.\"\"\"\n" ++
+      "    residual = x\n" ++
+      "    i = idx\n" ++
+      "    if expand > 1:\n" ++
+      "        # Expand\n" ++
+      "        x = jax.lax.conv_general_dilated(x, params[i][0], (1,1), 'SAME',\n" ++
+      "              dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "        mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "        var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "        x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "        x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "        x = jnp.minimum(jax.nn.relu(x), 6.0)\n" ++
+      "        i += 1\n" ++
+      "    # Depthwise\n" ++
+      "    x = depthwise_conv(x, params[i][0], stride=(stride,stride))\n" ++
+      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "    x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "    x = jnp.minimum(jax.nn.relu(x), 6.0)\n" ++
+      "    i += 1\n" ++
+      "    # Project (linear, no activation)\n" ++
+      "    x = jax.lax.conv_general_dilated(x, params[i][0], (1,1), 'SAME',\n" ++
+      "          dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "    x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "    if use_skip:\n" ++
+      "        x = x + residual\n" ++
+      "    return x\n\n"
   if spec.hasGlobalAvgPool then
     code := code ++
       "def global_avg_pool(x):\n" ++
@@ -366,6 +418,32 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
         "                   jnp.ones(" ++ toString ic ++ "), jnp.zeros(" ++ toString ic ++ ")))\n"
       -- Pointwise: reuse emitConvBnInit for 1x1 conv
       code := code ++ emitConvBnInit s!"SepConv PW {ic}→{oc}" ic oc 1
+    | .invertedResidual ic oc expand stride n =>
+      -- First block: ic→mid→oc
+      let mid := ic * expand
+      if expand != 1 then
+        code := code ++ emitConvBnInit s!"IR expand {ic}→{mid}" ic mid 1
+      -- Depthwise
+      let dwFanOut := 9
+      code := code ++
+        "    # IR DW " ++ toString mid ++ "ch, 3x3\n" ++
+        "    key, k_ = random.split(key)\n" ++
+        "    scale = jnp.sqrt(6.0 / " ++ toString dwFanOut ++ ")\n" ++
+        "    params.append((random.uniform(k_, (" ++ toString mid ++ ", 1, 3, 3), minval=-scale, maxval=scale),\n" ++
+        "                   jnp.ones(" ++ toString mid ++ "), jnp.zeros(" ++ toString mid ++ ")))\n"
+      code := code ++ emitConvBnInit s!"IR project {mid}→{oc}" mid oc 1
+      -- Remaining blocks: oc→oc*expand→oc, stride=1
+      for _ in List.range (n - 1) do
+        let midR := oc * expand
+        if expand != 1 then
+          code := code ++ emitConvBnInit s!"IR expand {oc}→{midR}" oc midR 1
+        code := code ++
+          "    # IR DW " ++ toString midR ++ "ch, 3x3\n" ++
+          "    key, k_ = random.split(key)\n" ++
+          "    scale = jnp.sqrt(6.0 / " ++ toString dwFanOut ++ ")\n" ++
+          "    params.append((random.uniform(k_, (" ++ toString midR ++ ", 1, 3, 3), minval=-scale, maxval=scale),\n" ++
+          "                   jnp.ones(" ++ toString midR ++ "), jnp.zeros(" ++ toString midR ++ ")))\n"
+        code := code ++ emitConvBnInit s!"IR project {midR}→{oc}" midR oc 1
     | _ => pure ()
   code := code ++ "    return params\n\n"
   code
@@ -440,6 +518,19 @@ private def emitForward (spec : NetSpec) : String := Id.run do
         toString (pidx + 1) ++ "][0], params[" ++ toString (pidx + 1) ++ "][1], params[" ++
         toString (pidx + 1) ++ "][2], stride=" ++ strideStr ++ ")\n"
       pidx := pidx + 2
+    | .invertedResidual ic oc expand stride n =>
+      let nParamsPerBlock (hasExpand : Bool) := (if hasExpand then 1 else 0) + 1 + 1  -- expand? + dw + proj
+      let hasExpand := expand != 1
+      -- First block: may have stride, no skip (ic≠oc or stride≠1 typically)
+      let useSkip := if ic == oc && stride == 1 then "True" else "False"
+      code := code ++ "    x = invres_block(params, x, " ++ toString pidx ++ ", " ++
+        toString stride ++ ", " ++ toString expand ++ ", " ++ useSkip ++ ")\n"
+      pidx := pidx + nParamsPerBlock hasExpand
+      -- Remaining blocks: stride=1, skip when oc==oc (always true)
+      for _ in List.range (n - 1) do
+        code := code ++ "    x = invres_block(params, x, " ++ toString pidx ++ ", 1, " ++
+          toString expand ++ ", True)\n"
+        pidx := pidx + nParamsPerBlock hasExpand
   code := code ++ "    return x\n\n"
   code
 

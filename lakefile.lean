@@ -25,3 +25,6 @@ lean_exe «resnet50» where
 
 lean_exe «mobilenet-v1» where
   root := `MainMobilenet
+
+lean_exe «mobilenet-v2» where
+  root := `MainMobilenetV2
