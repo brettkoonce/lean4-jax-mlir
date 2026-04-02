@@ -11,6 +11,7 @@ Generate idiomatic JAX Python and run training.
 
 inductive Activation where
   | relu
+  | relu6
   | identity
 deriving Repr, BEq
 
@@ -28,6 +29,7 @@ inductive Layer where
   | dense   (fanIn fanOut : Nat) (act : Activation)
   | residualBlock (ic oc nBlocks firstStride : Nat)
   | bottleneckBlock (ic oc nBlocks firstStride : Nat)
+  | separableConv (ic oc stride : Nat)
 deriving Repr
 
 structure NetSpec where
@@ -78,25 +80,32 @@ def Layer.nParams : Layer → Nat
              (oc * ic * 1 + 2 * oc)
         else idBlock
       firstBlock + (n - 1) * idBlock
+  | .separableConv ic oc _ =>
+      -- depthwise 3x3: ic*9 weights + 2*ic (BN)
+      -- pointwise 1x1: oc*ic weights + 2*oc (BN)
+      (ic * 9 + 2 * ic) + (oc * ic + 2 * oc)
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
   s.layers.foldl (fun acc l => acc + l.nParams) 0
 
 def NetSpec.hasConv (s : NetSpec) : Bool :=
-  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
+  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | _ => false
 
 def NetSpec.hasPool (s : NetSpec) : Bool :=
   s.layers.any fun | .maxPool .. => true | _ => false
 
 def NetSpec.hasBn (s : NetSpec) : Bool :=
-  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
+  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | _ => false
 
 def NetSpec.hasResidual (s : NetSpec) : Bool :=
   s.layers.any fun | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasBottleneck (s : NetSpec) : Bool :=
   s.layers.any fun | .bottleneckBlock .. => true | _ => false
+
+def NetSpec.hasSeparable (s : NetSpec) : Bool :=
+  s.layers.any fun | .separableConv .. => true | _ => false
 
 def NetSpec.hasGlobalAvgPool (s : NetSpec) : Bool :=
   s.layers.any fun | .globalAvgPool => true | _ => false
@@ -115,10 +124,11 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .globalAvgPool             => "GAP"
     | .flatten                   => "Flatten"
     | .dense fi fo act           =>
-      let a := match act with | .relu => ",ReLU" | .identity => ""
+      let a := match act with | .relu => ",ReLU" | .relu6 => ",ReLU6" | .identity => ""
       s!"{fi}→{fo}{a}"
     | .residualBlock ic oc n fs   => s!"Res{n}({ic}→{oc},s{fs})"
-    | .bottleneckBlock ic oc n fs => s!"BN{n}({ic}→{oc},s{fs})")
+    | .bottleneckBlock ic oc n fs => s!"BN{n}({ic}→{oc},s{fs})"
+    | .separableConv ic oc st     => s!"Sep({ic}→{oc},s{st})")
 
 -- ===========================================================================
 -- § 3  JAX Code Generator
@@ -252,6 +262,27 @@ private def emitHelpers (spec : NetSpec) : String := Id.run do
       "    out = conv_bn(out, params[idx+2][0], params[idx+2][1], params[idx+2][2])\n" ++
       "    shortcut = conv_bn(x, params[idx+3][0], params[idx+3][1], params[idx+3][2], stride=(stride,stride))\n" ++
       "    return jax.nn.relu(out + shortcut)\n\n"
+  if spec.hasSeparable then
+    code := code ++
+      "def depthwise_conv(x, w, stride=(1,1), padding='SAME'):\n" ++
+      "    return jax.lax.conv_general_dilated(x, w, stride, padding,\n" ++
+      "          dimension_numbers=('NCHW', 'OIHW', 'NCHW'),\n" ++
+      "          feature_group_count=x.shape[1])\n\n" ++
+      "def sep_conv(x, dw, dw_g, dw_b, pw, pw_g, pw_b, stride=(1,1)):\n" ++
+      "    \"\"\"Depthwise 3x3 + BN + ReLU6, then pointwise 1x1 + BN + ReLU6.\"\"\"\n" ++
+      "    x = depthwise_conv(x, dw, stride=stride)\n" ++
+      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "    x = x * dw_g.reshape(1, -1, 1, 1) + dw_b.reshape(1, -1, 1, 1)\n" ++
+      "    x = jnp.minimum(jax.nn.relu(x), 6.0)\n" ++
+      "    x = jax.lax.conv_general_dilated(x, pw, (1,1), 'SAME',\n" ++
+      "          dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "    x = x * pw_g.reshape(1, -1, 1, 1) + pw_b.reshape(1, -1, 1, 1)\n" ++
+      "    return jnp.minimum(jax.nn.relu(x), 6.0)\n\n"
   if spec.hasGlobalAvgPool then
     code := code ++
       "def global_avg_pool(x):\n" ++
@@ -324,6 +355,17 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
         code := code ++ emitConvBnInit s!"Bottleneck 1x1 {oc}→{mid}" oc mid 1
         code := code ++ emitConvBnInit s!"Bottleneck 3x3 {mid}→{mid}" mid mid 3
         code := code ++ emitConvBnInit s!"Bottleneck 1x1 {mid}→{oc}" mid oc 1
+    | .separableConv ic oc _ =>
+      -- Depthwise: weight shape (ic, 1, 3, 3), Kaiming init
+      let dwFanOut := 9
+      code := code ++
+        "    # SepConv DW " ++ toString ic ++ "ch, 3x3\n" ++
+        "    key, k_ = random.split(key)\n" ++
+        "    scale = jnp.sqrt(6.0 / " ++ toString dwFanOut ++ ")\n" ++
+        "    params.append((random.uniform(k_, (" ++ toString ic ++ ", 1, 3, 3), minval=-scale, maxval=scale),\n" ++
+        "                   jnp.ones(" ++ toString ic ++ "), jnp.zeros(" ++ toString ic ++ ")))\n"
+      -- Pointwise: reuse emitConvBnInit for 1x1 conv
+      code := code ++ emitConvBnInit s!"SepConv PW {ic}→{oc}" ic oc 1
     | _ => pure ()
   code := code ++ "    return params\n\n"
   code
@@ -347,6 +389,7 @@ private def emitForward (spec : NetSpec) : String := Id.run do
       code := code ++ "    x = conv2d(x, params[" ++ toString pidx ++ "][0], params[" ++
         toString pidx ++ "][1], '" ++ padStr ++ "')\n"
       if act == .relu then code := code ++ "    x = jax.nn.relu(x)\n"
+      if act == .relu6 then code := code ++ "    x = jnp.minimum(jax.nn.relu(x), 6.0)\n"
       pidx := pidx + 1
     | .convBn _ _ _ s pad =>
       let padStr := match pad with | .same => "SAME" | .valid => "VALID"
@@ -366,6 +409,7 @@ private def emitForward (spec : NetSpec) : String := Id.run do
       code := code ++ "    x = x @ params[" ++ toString pidx ++ "][0].T + params[" ++
         toString pidx ++ "][1]\n"
       if act == .relu then code := code ++ "    x = jax.nn.relu(x)\n"
+      if act == .relu6 then code := code ++ "    x = jnp.minimum(jax.nn.relu(x), 6.0)\n"
       pidx := pidx + 1
     | .residualBlock ic oc n fs =>
       let needsProj := !(ic == oc && fs == 1)
@@ -389,6 +433,13 @@ private def emitForward (spec : NetSpec) : String := Id.run do
       for _ in List.range (n - 1) do
         code := code ++ "    x = bottleneck_block(params, x, " ++ toString pidx ++ ")\n"
         pidx := pidx + 3
+    | .separableConv _ _ s =>
+      let strideStr := "(" ++ toString s ++ "," ++ toString s ++ ")"
+      code := code ++ "    x = sep_conv(x, params[" ++ toString pidx ++ "][0], params[" ++
+        toString pidx ++ "][1], params[" ++ toString pidx ++ "][2], params[" ++
+        toString (pidx + 1) ++ "][0], params[" ++ toString (pidx + 1) ++ "][1], params[" ++
+        toString (pidx + 1) ++ "][2], stride=" ++ strideStr ++ ")\n"
+      pidx := pidx + 2
   code := code ++ "    return x\n\n"
   code
 
