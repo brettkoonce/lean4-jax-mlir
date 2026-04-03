@@ -540,14 +540,14 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
       let needsProj := !(ic == oc && fs == 1)
       if needsProj then
         code := code ++ emitConvBnInit s!"ResBlock ↓ conv1 {ic}→{oc}" ic oc 3
-        code := code ++ emitConvBnInit s!"ResBlock ↓ conv2 {oc}→{oc}" oc oc 3 (zeroGamma := true)
+        code := code ++ emitConvBnInit s!"ResBlock ↓ conv2 {oc}→{oc}" oc oc 3
         code := code ++ emitConvBnInit s!"ResBlock ↓ proj {ic}→{oc}" ic oc 1
       else
         code := code ++ emitConvBnInit s!"ResBlock conv1 {oc}→{oc}" oc oc 3
-        code := code ++ emitConvBnInit s!"ResBlock conv2 {oc}→{oc}" oc oc 3 (zeroGamma := true)
+        code := code ++ emitConvBnInit s!"ResBlock conv2 {oc}→{oc}" oc oc 3
       for _ in List.range (n - 1) do
         code := code ++ emitConvBnInit s!"ResBlock conv1 {oc}→{oc}" oc oc 3
-        code := code ++ emitConvBnInit s!"ResBlock conv2 {oc}→{oc}" oc oc 3 (zeroGamma := true)
+        code := code ++ emitConvBnInit s!"ResBlock conv2 {oc}→{oc}" oc oc 3
     | .bottleneckBlock ic oc n fs =>
       let mid := oc / 4
       let needsProj := !(ic == oc && fs == 1)
