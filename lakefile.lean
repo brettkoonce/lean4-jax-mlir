@@ -28,3 +28,6 @@ lean_exe «mobilenet-v1» where
 
 lean_exe «mobilenet-v2» where
   root := `MainMobilenetV2
+
+lean_exe «efficientnet-b0» where
+  root := `MainEfficientNet

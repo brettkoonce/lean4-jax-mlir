@@ -31,6 +31,7 @@ inductive Layer where
   | bottleneckBlock (ic oc nBlocks firstStride : Nat)
   | separableConv (ic oc stride : Nat)
   | invertedResidual (ic oc expand stride nBlocks : Nat)
+  | mbConv (ic oc expand kSize stride nBlocks : Nat) (useSE : Bool)
 deriving Repr
 
 structure NetSpec where
@@ -99,19 +100,35 @@ def Layer.nParams : Layer → Nat
       let projR := oc * midR + 2 * oc
       let restBlock := expandR + dwR + projR
       firstBlock + (n - 1) * restBlock
+  | .mbConv ic oc expand k stride n useSE =>
+      let mid := ic * expand
+      let expandP := if expand == 1 then 0 else (mid * ic + 2 * mid)
+      let dwP := mid * k * k + 2 * mid
+      let seMid := Nat.max 1 (mid / 4)
+      let seP := if useSE then (seMid * mid + seMid) + (mid * seMid + mid) else 0
+      let projP := oc * mid + 2 * oc
+      let firstBlock := expandP + dwP + seP + projP
+      let midR := oc * expand
+      let expandR := if expand == 1 then 0 else (midR * oc + 2 * midR)
+      let dwR := midR * k * k + 2 * midR
+      let seMidR := Nat.max 1 (midR / 4)
+      let seR := if useSE then (seMidR * midR + seMidR) + (midR * seMidR + midR) else 0
+      let projR := oc * midR + 2 * oc
+      let restBlock := expandR + dwR + seR + projR
+      firstBlock + (n - 1) * restBlock
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
   s.layers.foldl (fun acc l => acc + l.nParams) 0
 
 def NetSpec.hasConv (s : NetSpec) : Bool :=
-  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | _ => false
+  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | _ => false
 
 def NetSpec.hasPool (s : NetSpec) : Bool :=
   s.layers.any fun | .maxPool .. => true | _ => false
 
 def NetSpec.hasBn (s : NetSpec) : Bool :=
-  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | _ => false
+  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | _ => false
 
 def NetSpec.hasResidual (s : NetSpec) : Bool :=
   s.layers.any fun | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
@@ -120,10 +137,13 @@ def NetSpec.hasBottleneck (s : NetSpec) : Bool :=
   s.layers.any fun | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasSeparable (s : NetSpec) : Bool :=
-  s.layers.any fun | .separableConv .. => true | .invertedResidual .. => true | _ => false
+  s.layers.any fun | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | _ => false
 
 def NetSpec.hasInvertedResidual (s : NetSpec) : Bool :=
   s.layers.any fun | .invertedResidual .. => true | _ => false
+
+def NetSpec.hasMbConv (s : NetSpec) : Bool :=
+  s.layers.any fun | .mbConv .. => true | _ => false
 
 def NetSpec.hasGlobalAvgPool (s : NetSpec) : Bool :=
   s.layers.any fun | .globalAvgPool => true | _ => false
@@ -147,7 +167,8 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .residualBlock ic oc n fs   => s!"Res{n}({ic}→{oc},s{fs})"
     | .bottleneckBlock ic oc n fs => s!"BN{n}({ic}→{oc},s{fs})"
     | .separableConv ic oc st        => s!"Sep({ic}→{oc},s{st})"
-    | .invertedResidual ic oc e s n  => s!"IR{n}({ic}→{oc},e{e},s{s})")
+    | .invertedResidual ic oc e s n     => s!"IR{n}({ic}→{oc},e{e},s{s})"
+    | .mbConv ic oc e k s n useSE      => s!"MB{n}({ic}→{oc},e{e},k{k},s{s}" ++ (if useSE then ",SE" else "") ++ ")")
 
 -- ===========================================================================
 -- § 3  JAX Code Generator
@@ -336,6 +357,58 @@ private def emitHelpers (spec : NetSpec) : String := Id.run do
       "    if use_skip:\n" ++
       "        x = x + residual\n" ++
       "    return x\n\n"
+  if spec.hasMbConv then
+    code := code ++
+      "def swish(x):\n" ++
+      "    return x * jax.nn.sigmoid(x)\n\n" ++
+      "def mbconv_block(params, x, idx, stride, expand, ksize, use_se):\n" ++
+      "    \"\"\"MBConv: expand → depthwise → SE → project, with Swish.\"\"\"\n" ++
+      "    residual = x\n" ++
+      "    i = idx\n" ++
+      "    if expand > 1:\n" ++
+      "        x = jax.lax.conv_general_dilated(x, params[i][0], (1,1), 'SAME',\n" ++
+      "              dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "        mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "        var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "        x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "        x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "        x = swish(x)\n" ++
+      "        i += 1\n" ++
+      "    # Depthwise conv\n" ++
+      "    pad = ((ksize - 1) // 2, (ksize - 1) // 2)\n" ++
+      "    x = jax.lax.conv_general_dilated(x, params[i][0], (stride,stride), (pad,pad),\n" ++
+      "          dimension_numbers=('NCHW', 'OIHW', 'NCHW'),\n" ++
+      "          feature_group_count=x.shape[1])\n" ++
+      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "    x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "    x = swish(x)\n" ++
+      "    i += 1\n" ++
+      "    # Squeeze-and-Excitation\n" ++
+      "    if use_se:\n" ++
+      "        se = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "        se = jax.lax.conv_general_dilated(se, params[i][0], (1,1), 'SAME',\n" ++
+      "              dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "        se = se + params[i][1].reshape(1, -1, 1, 1)\n" ++
+      "        se = swish(se)\n" ++
+      "        i += 1\n" ++
+      "        se = jax.lax.conv_general_dilated(se, params[i][0], (1,1), 'SAME',\n" ++
+      "              dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "        se = se + params[i][1].reshape(1, -1, 1, 1)\n" ++
+      "        se = jax.nn.sigmoid(se)\n" ++
+      "        x = x * se\n" ++
+      "        i += 1\n" ++
+      "    # Project (linear)\n" ++
+      "    x = jax.lax.conv_general_dilated(x, params[i][0], (1,1), 'SAME',\n" ++
+      "          dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
+      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "    x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "    if residual.shape == x.shape and stride == 1:\n" ++
+      "        x = x + residual\n" ++
+      "    return x\n\n"
   if spec.hasGlobalAvgPool then
     code := code ++
       "def global_avg_pool(x):\n" ++
@@ -445,6 +518,45 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
           "    params.append((random.uniform(k_, (" ++ toString midR ++ ", 1, 3, 3), minval=-scale, maxval=scale),\n" ++
           "                   jnp.ones(" ++ toString midR ++ "), jnp.zeros(" ++ toString midR ++ ")))\n"
         code := code ++ emitConvBnInit s!"IR project {midR}→{oc}" midR oc 1
+    | .mbConv ic oc expand kSize _ n useSE =>
+      -- Helper to emit one block's params
+      let emitBlock (blockIc blockOc : Nat) : String := Id.run do
+        let mid := blockIc * expand
+        let mut code := ""
+        -- Expand
+        if expand != 1 then
+          code := code ++ emitConvBnInit s!"MB expand {blockIc}→{mid}" blockIc mid 1
+        -- Depthwise
+        let dwFanOut := kSize * kSize
+        code := code ++
+          "    # MB DW " ++ toString mid ++ "ch, " ++ toString kSize ++ "x" ++ toString kSize ++ "\n" ++
+          "    key, k_ = random.split(key)\n" ++
+          "    scale = jnp.sqrt(6.0 / " ++ toString dwFanOut ++ ")\n" ++
+          "    params.append((random.uniform(k_, (" ++ toString mid ++ ", 1, " ++
+            toString kSize ++ ", " ++ toString kSize ++ "), minval=-scale, maxval=scale),\n" ++
+          "                   jnp.ones(" ++ toString mid ++ "), jnp.zeros(" ++ toString mid ++ ")))\n"
+        -- SE
+        if useSE then
+          let seMid := Nat.max 1 (mid / 4)
+          code := code ++
+            "    # SE down " ++ toString mid ++ "→" ++ toString seMid ++ "\n" ++
+            "    key, k_ = random.split(key)\n" ++
+            "    scale = jnp.sqrt(6.0 / " ++ toString seMid ++ ")\n" ++
+            "    params.append((random.uniform(k_, (" ++ toString seMid ++ ", " ++ toString mid ++
+              ", 1, 1), minval=-scale, maxval=scale), jnp.zeros(" ++ toString seMid ++ ")))\n" ++
+            "    # SE up " ++ toString seMid ++ "→" ++ toString mid ++ "\n" ++
+            "    key, k_ = random.split(key)\n" ++
+            "    scale = jnp.sqrt(6.0 / " ++ toString mid ++ ")\n" ++
+            "    params.append((random.uniform(k_, (" ++ toString mid ++ ", " ++ toString seMid ++
+              ", 1, 1), minval=-scale, maxval=scale), jnp.zeros(" ++ toString mid ++ ")))\n"
+        -- Project
+        code := code ++ emitConvBnInit s!"MB project {mid}→{blockOc}" mid blockOc 1
+        code
+      -- First block
+      code := code ++ emitBlock ic oc
+      -- Remaining blocks
+      for _ in List.range (n - 1) do
+        code := code ++ emitBlock oc oc
     | _ => pure ()
   code := code ++ "    return params\n\n"
   code
@@ -519,6 +631,20 @@ private def emitForward (spec : NetSpec) : String := Id.run do
         toString (pidx + 1) ++ "][0], params[" ++ toString (pidx + 1) ++ "][1], params[" ++
         toString (pidx + 1) ++ "][2], stride=" ++ strideStr ++ ")\n"
       pidx := pidx + 2
+    | .mbConv ic oc expand kSize stride n useSE =>
+      let nPerBlock (blockExpand : Nat) (se : Bool) :=
+        (if blockExpand != 1 then 1 else 0) + 1 + (if se then 2 else 0) + 1
+      let useSkipFirst := if ic == oc && stride == 1 then "True" else "False"
+      let _ := useSkipFirst  -- used in string below
+      code := code ++ "    x = mbconv_block(params, x, " ++ toString pidx ++ ", " ++
+        toString stride ++ ", " ++ toString expand ++ ", " ++ toString kSize ++ ", " ++
+        (if useSE then "True" else "False") ++ ")\n"
+      pidx := pidx + nPerBlock expand useSE
+      for _ in List.range (n - 1) do
+        code := code ++ "    x = mbconv_block(params, x, " ++ toString pidx ++ ", 1, " ++
+          toString expand ++ ", " ++ toString kSize ++ ", " ++
+          (if useSE then "True" else "False") ++ ")\n"
+        pidx := pidx + nPerBlock expand useSE
     | .invertedResidual ic oc expand stride n =>
       let nParamsPerBlock (hasExpand : Bool) := (if hasExpand then 1 else 0) + 1 + 1  -- expand? + dw + proj
       let hasExpand := expand != 1
