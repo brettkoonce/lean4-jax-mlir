@@ -20,6 +20,7 @@ Replicating the models from [Convolutional Neural Networks with Swift for Tensor
 | **VGG-16-BN** | `MainVgg.lean` | **14.7M** | **86.6%** | **27 min** | Adam |
 | ResNet-34 | `MainResnet.lean` | 21.3M | 80.1% | 26 min | Adam |
 | ResNet-50 | `MainResnet50.lean` | 23.5M | 78.4% | 31 min | Adam |
+| ViT-Tiny | `MainVit.lean` | 5.5M | 65.1% | 22 min | Adam |
 
 All Imagenette models trained from scratch on 6× RTX 4060 Ti, no pretrained weights, no cropping augmentation.
 
@@ -100,6 +101,16 @@ def mobilenetV2 : NetSpec where
     .globalAvgPool,
     .dense 1280 10 .identity
   ]
+-- ViT-Tiny — first transformer in Lean → JAX
+def vitTiny : NetSpec where
+  name := "ViT-Tiny"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .patchEmbed 3 192 16 196,             -- (224/16)^2 = 196 patches
+    .transformerEncoder 192 3 768 12,     -- 12 blocks, 3 heads, MLP dim 768
+    .dense 192 10 .identity
+  ]
 ```
 
 Lean generates a complete JAX training script and runs it. The generated
@@ -137,7 +148,7 @@ For GPU (ROCm):
 
 ```bash
 lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
-      mobilenet-v3 efficientnet-b0 vgg16bn resnet34 resnet50
+      mobilenet-v3 efficientnet-b0 vgg16bn resnet34 resnet50 vit-tiny
 
 .lake/build/bin/mnist-mlp       # 7.5s
 .lake/build/bin/mnist-cnn       # 23s on GPU
@@ -150,6 +161,7 @@ lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
 .lake/build/bin/vgg16bn         # 27 min on 6× GPU
 .lake/build/bin/resnet34        # 26 min on 6× GPU
 .lake/build/bin/resnet50        # 31 min on 6× GPU
+.lake/build/bin/vit-tiny        # 22 min on 6× GPU
 
 # Custom data dir
 .lake/build/bin/mnist-mlp /path/to/data
@@ -159,9 +171,9 @@ lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
 ## Project structure
 
 ```
-LeanJax.lean              Types + JAX codegen + runner (~1000 lines)
-Main*.lean                Model specs (11 architectures)
-lakefile.lean             Build config (11 executables, 1 library)
+LeanJax.lean              Types + JAX codegen + runner (~1100 lines)
+Main*.lean                Model specs (12 architectures)
+lakefile.lean             Build config (12 executables, 1 library)
 download_mnist.sh         Download MNIST dataset
 download_cifar.sh         Download CIFAR-10 dataset
 download_imagenette.sh    Download + preprocess Imagenette
@@ -178,9 +190,11 @@ bug_report.md             ROCm XLA conv fusion bug reproducer
    - Depthwise separable convs → `feature_group_count` in JAX
    - MBConv blocks → inverted residuals + squeeze-excitation + Swish/hard-swish
    - Fire modules → squeeze + parallel expand + channel concat
+   - Transformer blocks → multi-head self-attention + layer norm + MLP
+   - Patch embedding → conv projection + CLS token + positional embedding
    - Pool layers → `jax.lax.reduce_window`
    - Dense layers → `x @ w.T + b`
-   - Instance normalization, activation, init, loss, training loop — all generated
+   - Instance normalization, layer normalization, activation, init, loss, training loop — all generated
 3. `runJax` writes the script to `.lake/build/` and runs it via `python3`
 4. JAX handles autodiff (`value_and_grad`), JIT compilation, XLA
 
@@ -285,6 +299,8 @@ differ due to multi-GPU batching and optimizer discoveries:
 | `mbConv` | MBConv + SE + Swish (EfficientNet) |
 | `mbConvV3` | Hard-swish, hard-sigmoid SE (MobileNet v3) |
 | `fireModule` | Squeeze → parallel expand → concat (SqueezeNet) |
+| `patchEmbed` | Conv patch projection + CLS token + positional embedding (ViT) |
+| `transformerEncoder` | Multi-head self-attention + layer norm + MLP blocks (ViT) |
 | `maxPool`, `globalAvgPool`, `flatten` | Structural layers |
 
 ## Lean version
