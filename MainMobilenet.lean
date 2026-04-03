@@ -38,5 +38,5 @@ def mobilenetConfig : TrainConfig where
 
 def main (args : List String) : IO Unit :=
   runJax mobilenetV1 mobilenetConfig .imagenette
-    (args.head? |>.getD "../mnist-lean4/data/imagenette")
+    (args.head? |>.getD "data/imagenette")
     "generated_mobilenet_v1.py"

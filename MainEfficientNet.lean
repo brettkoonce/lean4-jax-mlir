@@ -33,5 +33,5 @@ def efficientNetConfig : TrainConfig where
 
 def main (args : List String) : IO Unit :=
   runJax efficientNetB0 efficientNetConfig .imagenette
-    (args.head? |>.getD "../mnist-lean4/data/imagenette")
+    (args.head? |>.getD "data/imagenette")
     "generated_efficientnet_b0.py"

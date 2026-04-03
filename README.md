@@ -128,11 +128,9 @@ For GPU (ROCm):
 ### 3. Get data
 
 ```bash
-cd ../mnist-lean4
 ./download_mnist.sh        # MNIST (MLP, CNN)
 ./download_cifar.sh        # CIFAR-10
 ./download_imagenette.sh   # Imagenette (ResNet-34, requires Pillow)
-cd ../lean4-jax
 ```
 
 ### 4. Build and run
@@ -161,19 +159,14 @@ lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
 ## Project structure
 
 ```
-LeanJax.lean         Types + JAX codegen + runner (~1000 lines)
-MainMlp.lean         MNIST MLP spec
-MainCnn.lean         MNIST CNN spec
-MainCifar.lean       CIFAR-10 CNN spec
-MainResnet.lean      ResNet-34 spec
-MainResnet50.lean    ResNet-50 spec (bottleneck blocks)
-MainMobilenet.lean   MobileNet v1 spec (depthwise separable)
-MainMobilenetV2.lean MobileNet v2 spec (inverted residuals)
-MainEfficientNet.lean EfficientNet-B0 spec (MBConv + SE + Swish)
-MainMobilenetV3.lean MobileNet v3-Large spec (hard-swish, hard-sigmoid SE)
-MainSqueezeNet.lean  SqueezeNet v1.1 spec (Fire modules)
-MainVgg.lean         VGG-16-BN spec (deep 3×3 conv stack)
-lakefile.lean        Build config (11 executables, 1 library)
+LeanJax.lean              Types + JAX codegen + runner (~1000 lines)
+Main*.lean                Model specs (11 architectures)
+lakefile.lean             Build config (11 executables, 1 library)
+download_mnist.sh         Download MNIST dataset
+download_cifar.sh         Download CIFAR-10 dataset
+download_imagenette.sh    Download + preprocess Imagenette
+preprocess_imagenette.py  Resize JPEGs to 224×224 binary format
+bug_report.md             ROCm XLA conv fusion bug reproducer
 ```
 
 ## How it works

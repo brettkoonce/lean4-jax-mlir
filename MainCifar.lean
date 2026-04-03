@@ -26,4 +26,4 @@ def cifarConfig : TrainConfig where
   epochs       := 25
 
 def main (args : List String) : IO Unit :=
-  runJax cifarCnn cifarConfig .cifar10 (args.head? |>.getD "../mnist-lean4/data/cifar-10") "generated_cifar_cnn.py"
+  runJax cifarCnn cifarConfig .cifar10 (args.head? |>.getD "data/cifar-10") "generated_cifar_cnn.py"

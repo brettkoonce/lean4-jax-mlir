@@ -49,5 +49,5 @@ def vggConfig : TrainConfig where
 
 def main (args : List String) : IO Unit :=
   runJax vgg16bn vggConfig .imagenette
-    (args.head? |>.getD "../mnist-lean4/data/imagenette")
+    (args.head? |>.getD "data/imagenette")
     "generated_vgg16bn.py"

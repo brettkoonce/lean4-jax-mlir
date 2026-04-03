@@ -17,4 +17,4 @@ def mnistConfig : TrainConfig where
   epochs       := 12
 
 def main (args : List String) : IO Unit :=
-  runJax mnistMlp mnistConfig .mnist (args.head? |>.getD "../mnist-lean4/data") "generated_mnist_mlp.py"
+  runJax mnistMlp mnistConfig .mnist (args.head? |>.getD "data") "generated_mnist_mlp.py"

@@ -21,4 +21,4 @@ def cnnConfig : TrainConfig where
   epochs       := 12
 
 def main (args : List String) : IO Unit :=
-  runJax mnistCnn cnnConfig .mnist (args.head? |>.getD "../mnist-lean4/data") "generated_mnist_cnn.py"
+  runJax mnistCnn cnnConfig .mnist (args.head? |>.getD "data") "generated_mnist_cnn.py"

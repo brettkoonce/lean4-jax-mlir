@@ -30,5 +30,5 @@ def resnetConfig : TrainConfig where
 
 def main (args : List String) : IO Unit :=
   runJax resnet34 resnetConfig .imagenette
-    (args.head? |>.getD "../mnist-lean4/data/imagenette")
+    (args.head? |>.getD "data/imagenette")
     "generated_resnet34.py"

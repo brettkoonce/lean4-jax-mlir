@@ -37,5 +37,5 @@ def squeezenetConfig : TrainConfig where
 
 def main (args : List String) : IO Unit :=
   runJax squeezenet squeezenetConfig .imagenette
-    (args.head? |>.getD "../mnist-lean4/data/imagenette")
+    (args.head? |>.getD "data/imagenette")
     "generated_squeezenet.py"
