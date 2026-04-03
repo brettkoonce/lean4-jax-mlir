@@ -16,6 +16,7 @@ Replicating the models from [Convolutional Neural Networks with Swift for Tensor
 | ResNet-50 | `MainResnet50.lean` | 23.5M | 61.2% | 31 min | SGD+momentum |
 | MobileNet v1 | `MainMobilenet.lean` | 3.2M | 52.4% | 15 min | Adam |
 | MobileNet v2 | `MainMobilenetV2.lean` | 2.2M | 59.4% | 15 min | Adam |
+| EfficientNet-B0 | `MainEfficientNet.lean` | 7.2M | 55.9% | 16 min | Adam |
 
 ## Lean specs
 
@@ -132,7 +133,7 @@ cd ../lean4-jax
 ### 4. Build and run
 
 ```bash
-lake build mnist-mlp mnist-cnn cifar-cnn resnet34 resnet50 mobilenet-v1 mobilenet-v2
+lake build mnist-mlp mnist-cnn cifar-cnn resnet34 resnet50 mobilenet-v1 mobilenet-v2 efficientnet-b0
 
 .lake/build/bin/mnist-mlp       # 7.5s
 .lake/build/bin/mnist-cnn       # 23s on GPU
@@ -141,6 +142,7 @@ lake build mnist-mlp mnist-cnn cifar-cnn resnet34 resnet50 mobilenet-v1 mobilene
 .lake/build/bin/resnet50        # 31 min on 6× GPU
 .lake/build/bin/mobilenet-v1    # 15 min on 6× GPU
 .lake/build/bin/mobilenet-v2    # 15 min on 6× GPU
+.lake/build/bin/efficientnet-b0 # 16 min on 6× GPU
 
 # Custom data dir
 .lake/build/bin/mnist-mlp /path/to/data
@@ -158,7 +160,8 @@ MainResnet.lean      ResNet-34 spec
 MainResnet50.lean    ResNet-50 spec (bottleneck blocks)
 MainMobilenet.lean   MobileNet v1 spec (depthwise separable)
 MainMobilenetV2.lean MobileNet v2 spec (inverted residuals)
-lakefile.lean        Build config (7 executables, 1 library)
+MainEfficientNet.lean EfficientNet-B0 spec (MBConv + SE + Swish)
+lakefile.lean        Build config (8 executables, 1 library)
 ```
 
 ## How it works
@@ -166,7 +169,9 @@ lakefile.lean        Build config (7 executables, 1 library)
 1. Lean defines the network as a `NetSpec` — a list of `Layer` values
 2. `JaxCodegen.generate` walks the layer list and emits idiomatic JAX Python
    - Conv layers → `jax.lax.conv_general_dilated`
-   - Residual blocks → `basic_block` / `basic_block_down` with skip connections
+   - Residual blocks → `basic_block` / `bottleneck_block` with skip connections
+   - Depthwise separable convs → `feature_group_count` in JAX
+   - MBConv blocks → inverted residuals + squeeze-excitation + Swish
    - Pool layers → `jax.lax.reduce_window`
    - Dense layers → `x @ w.T + b`
    - Instance normalization, activation, init, loss, training loop — all generated
