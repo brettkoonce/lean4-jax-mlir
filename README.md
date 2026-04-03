@@ -18,7 +18,7 @@ Replicating the models from [Convolutional Neural Networks with Swift for Tensor
 | MobileNet v3-Large | `MainMobilenetV3.lean` | 3.0M | 52.4% | 14 min | Adam |
 | EfficientNet-B0 | `MainEfficientNet.lean` | 7.2M | 55.9% | 16 min | Adam |
 | **VGG-16-BN** | `MainVgg.lean` | **14.7M** | **86.6%** | **27 min** | Adam |
-| ResNet-34 | `MainResnet.lean` | 21.3M | 72.8% | 17 min | SGD+momentum |
+| ResNet-34 | `MainResnet.lean` | 21.3M | 80.1% | 26 min | Adam |
 | ResNet-50 | `MainResnet50.lean` | 23.5M | 78.4% | 31 min | Adam |
 
 All Imagenette models trained from scratch on 6× RTX 4060 Ti, no pretrained weights, no cropping augmentation.
@@ -148,7 +148,7 @@ lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
 .lake/build/bin/mobilenet-v3    # 14 min on 6× GPU
 .lake/build/bin/efficientnet-b0 # 16 min on 6× GPU
 .lake/build/bin/vgg16bn         # 27 min on 6× GPU
-.lake/build/bin/resnet34        # 17 min on 6× GPU
+.lake/build/bin/resnet34        # 26 min on 6× GPU
 .lake/build/bin/resnet50        # 31 min on 6× GPU
 
 # Custom data dir
@@ -255,7 +255,7 @@ differ due to multi-GPU batching and optimizer discoveries:
 | MNIST MLP | SGD 0.1, bs=128, 12ep | Same | Exact match |
 | MNIST CNN | SGD 0.1 | SGD 0.01 | LR tuned for stability |
 | CIFAR-10 | SGD 0.1, 12ep | SGD 0.01, 25ep | LR tuned, more epochs |
-| ResNet-34 | SGD 0.002, mom=0.9, bs=32 | SGD 0.02, bs=192 + cosine/warmup/WD | Linear LR scaling for 6× batch |
+| ResNet-34 | SGD 0.002, mom=0.9, bs=32 | Adam 0.001 + cosine/WD | Adam outperforms SGD with instance norm |
 | ResNet-50 | SGD 0.002, mom=0.9, bs=32 | Adam 0.001 + cosine/WD + zero-init residual | Bottleneck blocks need adaptive LR |
 | MobileNets | SGD 0.002, mom=0.9 | Adam 0.001 + cosine/WD | SGD can't converge without skip connections |
 | EfficientNet | SGD 0.002, mom=0.9 | Adam 0.001 + cosine/WD | Same — depthwise convs need adaptive LR |
