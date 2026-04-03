@@ -37,3 +37,6 @@ lean_exe «mobilenet-v3» where
 
 lean_exe «squeezenet» where
   root := `MainSqueezeNet
+
+lean_exe «vgg16bn» where
+  root := `MainVgg
