@@ -13,9 +13,9 @@ Replicating the models from [Convolutional Neural Networks with Swift for Tensor
 | MNIST CNN | `MainCnn.lean` | 3.5M | 97.6% | 23s | SGD |
 | CIFAR-10 CNN | `MainCifar.lean` | 2.4M | 63.3% | 53s | SGD |
 | SqueezeNet v1.1 | `MainSqueezeNet.lean` | 730K | 66.3% | 13 min | Adam |
-| MobileNet v1 | `MainMobilenet.lean` | 3.2M | 52.4% | 15 min | Adam |
-| MobileNet v2 | `MainMobilenetV2.lean` | 2.2M | 59.4% | 15 min | Adam |
-| MobileNet v3-Large | `MainMobilenetV3.lean` | 3.0M | 52.4% | 14 min | Adam |
+| MobileNet v1 | `MainMobilenet.lean` | 3.2M | 62.8% | 23 min | Adam |
+| MobileNet v2 | `MainMobilenetV2.lean` | 2.2M | 63.4% | 24 min | Adam |
+| MobileNet v3-Large | `MainMobilenetV3.lean` | 3.0M | 62.4% | 22 min | Adam |
 | EfficientNet-B0 | `MainEfficientNet.lean` | 7.2M | 55.9% | 16 min | Adam |
 | **VGG-16-BN** | `MainVgg.lean` | **14.7M** | **86.6%** | **27 min** | Adam |
 | ResNet-34 | `MainResnet.lean` | 21.3M | 80.1% | 26 min | Adam |
