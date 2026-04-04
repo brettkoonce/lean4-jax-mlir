@@ -34,6 +34,7 @@ inductive Layer where
   | mbConv (ic oc expand kSize stride nBlocks : Nat) (useSE : Bool)
   | mbConvV3 (ic oc expandCh kSize stride : Nat) (useSE useHSwish : Bool)
   | fusedMbConv (ic oc expand kSize stride nBlocks : Nat) (useSE : Bool)
+  | uib (ic oc expand stride : Nat) (preDWk postDWk : Nat)  -- Universal Inverted Bottleneck; k=0 means no DW
   | fireModule (ic squeeze expand1x1 expand3x3 : Nat)
   | patchEmbed (ic dim patchSize nPatches : Nat)
   | transformerEncoder (dim heads mlpDim nBlocks : Nat)
@@ -145,6 +146,13 @@ def Layer.nParams : Layer → Nat
       let projR := if expand == 1 then 0 else (oc * midR + 2 * oc)
       let restBlock := expandR + seR + projR
       firstBlock + (n - 1) * restBlock
+  | .uib ic oc expand stride preDWk postDWk =>
+      let mid := ic * expand
+      let preDW := if preDWk > 0 then ic * preDWk * preDWk + 2 * ic else 0
+      let expandP := mid * ic + 2 * mid             -- 1x1 expand
+      let postDW := if postDWk > 0 then mid * postDWk * postDWk + 2 * mid else 0
+      let projP := oc * mid + 2 * oc                -- 1x1 project
+      preDW + expandP + postDW + projP
   | .fireModule ic sq e1 e3 =>
       (sq * ic + 2 * sq) + (e1 * sq + 2 * e1) + (e3 * sq * 9 + 2 * e3)
   | .patchEmbed ic dim p nP =>
@@ -164,13 +172,13 @@ def NetSpec.totalParams (s : NetSpec) : Nat :=
   s.layers.foldl (fun acc l => acc + l.nParams) 0
 
 def NetSpec.hasConv (s : NetSpec) : Bool :=
-  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | .mbConvV3 .. => true | .fusedMbConv .. => true | .fireModule .. => true | .patchEmbed .. => true | _ => false
+  s.layers.any fun | .conv2d .. => true | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | .mbConvV3 .. => true | .fusedMbConv .. => true | .uib .. => true | .fireModule .. => true | .patchEmbed .. => true | _ => false
 
 def NetSpec.hasPool (s : NetSpec) : Bool :=
   s.layers.any fun | .maxPool .. => true | _ => false
 
 def NetSpec.hasBn (s : NetSpec) : Bool :=
-  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | .mbConvV3 .. => true | .fusedMbConv .. => true | .fireModule .. => true | _ => false
+  s.layers.any fun | .convBn .. => true | .residualBlock .. => true | .bottleneckBlock .. => true | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | .mbConvV3 .. => true | .fusedMbConv .. => true | .uib .. => true | .fireModule .. => true | _ => false
 
 def NetSpec.hasResidual (s : NetSpec) : Bool :=
   s.layers.any fun | .residualBlock .. => true | .bottleneckBlock .. => true | _ => false
@@ -179,7 +187,7 @@ def NetSpec.hasBottleneck (s : NetSpec) : Bool :=
   s.layers.any fun | .bottleneckBlock .. => true | _ => false
 
 def NetSpec.hasSeparable (s : NetSpec) : Bool :=
-  s.layers.any fun | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | .mbConvV3 .. => true | _ => false
+  s.layers.any fun | .separableConv .. => true | .invertedResidual .. => true | .mbConv .. => true | .mbConvV3 .. => true | .uib .. => true | _ => false
 
 def NetSpec.hasInvertedResidual (s : NetSpec) : Bool :=
   s.layers.any fun | .invertedResidual .. => true | _ => false
@@ -217,6 +225,7 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .mbConvV3 ic oc exp k s useSE hs => s!"V3({ic}→{oc},{exp},k{k},s{s}" ++
         (if useSE then ",SE" else "") ++ (if hs then ",HS" else ",RE") ++ ")"
     | .fusedMbConv ic oc e k s n useSE => s!"FMB{n}({ic}→{oc},e{e},k{k},s{s}" ++ (if useSE then ",SE" else "") ++ ")"
+    | .uib ic oc e s pDW poDW => s!"UIB({ic}→{oc},e{e},s{s},dw{pDW}/{poDW})"
     | .fireModule ic sq e1 e3 => s!"Fire({ic}→{e1 + e3},sq{sq})"
     | .patchEmbed ic dim p _     => s!"Patch({ic}→{dim},{p}x{p})"
     | .transformerEncoder dim h _ n => s!"Trans({n}x[{h}h,{dim}])")
@@ -556,6 +565,46 @@ private def emitHelpers (spec : NetSpec) : String := Id.run do
       "    if residual.shape == x.shape and stride == 1:\n" ++
       "        x = x + residual\n" ++
       "    return x\n\n"
+  if spec.layers.any fun | .uib .. => true | _ => false then
+    code := code ++
+      "def uib_block(params, x, idx, stride, pre_dw_k, post_dw_k):\n" ++
+      "    \"\"\"Universal Inverted Bottleneck: optional DW → expand 1x1 → optional DW → project 1x1.\"\"\"\n" ++
+      "    residual = x\n" ++
+      "    i = idx\n" ++
+      "    # Optional pre-depthwise\n" ++
+      "    if pre_dw_k > 0:\n" ++
+      "        pad = ((pre_dw_k - 1) // 2, (pre_dw_k - 1) // 2)\n" ++
+      "        x = jax.lax.conv_general_dilated(x, params[i][0], (stride,stride), (pad,pad),\n" ++
+      "              dimension_numbers=('NCHW', 'OIHW', 'NCHW'),\n" ++
+      "              feature_group_count=x.shape[1])\n" ++
+      "        mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "        var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "        x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "        x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "        x = jax.nn.relu(x)\n" ++
+      "        i += 1\n" ++
+      "        stride = 1  # stride consumed by pre-DW\n" ++
+      "    # Expand 1x1\n" ++
+      "    x = conv_bn(x, params[i][0], params[i][1], params[i][2])\n" ++
+      "    x = jax.nn.relu(x)\n" ++
+      "    i += 1\n" ++
+      "    # Optional post-depthwise\n" ++
+      "    if post_dw_k > 0:\n" ++
+      "        pad = ((post_dw_k - 1) // 2, (post_dw_k - 1) // 2)\n" ++
+      "        x = jax.lax.conv_general_dilated(x, params[i][0], (stride,stride), (pad,pad),\n" ++
+      "              dimension_numbers=('NCHW', 'OIHW', 'NCHW'),\n" ++
+      "              feature_group_count=x.shape[1])\n" ++
+      "        mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
+      "        var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "        x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
+      "        x = x * params[i][1].reshape(1, -1, 1, 1) + params[i][2].reshape(1, -1, 1, 1)\n" ++
+      "        x = jax.nn.relu(x)\n" ++
+      "        i += 1\n" ++
+      "    # Project 1x1 (linear)\n" ++
+      "    x = conv_bn(x, params[i][0], params[i][1], params[i][2])\n" ++
+      "    if residual.shape == x.shape:\n" ++
+      "        x = x + residual\n" ++
+      "    return x\n\n"
   if spec.layers.any fun | .fireModule .. => true | _ => false then
     code := code ++
       "def fire_module(params, x, idx):\n" ++
@@ -788,6 +837,32 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
             ", 1, 1), minval=-scale, maxval=scale), jnp.zeros(" ++ toString expandCh ++ ")))\n"
       -- Project
       code := code ++ emitConvBnInit s!"V3 project {expandCh}→{oc}" expandCh oc 1
+    | .uib ic oc expand _stride preDWk postDWk =>
+      let mid := ic * expand
+      -- Pre-depthwise (on ic channels)
+      if preDWk > 0 then
+        let dwFanOut := preDWk * preDWk
+        code := code ++
+          "    # UIB pre-DW " ++ toString ic ++ "ch, " ++ toString preDWk ++ "x" ++ toString preDWk ++ "\n" ++
+          "    key, k_ = random.split(key)\n" ++
+          "    scale = jnp.sqrt(6.0 / " ++ toString dwFanOut ++ ")\n" ++
+          "    params.append((random.uniform(k_, (" ++ toString ic ++ ", 1, " ++
+            toString preDWk ++ ", " ++ toString preDWk ++ "), minval=-scale, maxval=scale),\n" ++
+          "                   jnp.ones(" ++ toString ic ++ "), jnp.zeros(" ++ toString ic ++ ")))\n"
+      -- Expand 1x1
+      code := code ++ emitConvBnInit s!"UIB expand {ic}→{mid}" ic mid 1
+      -- Post-depthwise (on mid channels)
+      if postDWk > 0 then
+        let dwFanOut := postDWk * postDWk
+        code := code ++
+          "    # UIB post-DW " ++ toString mid ++ "ch, " ++ toString postDWk ++ "x" ++ toString postDWk ++ "\n" ++
+          "    key, k_ = random.split(key)\n" ++
+          "    scale = jnp.sqrt(6.0 / " ++ toString dwFanOut ++ ")\n" ++
+          "    params.append((random.uniform(k_, (" ++ toString mid ++ ", 1, " ++
+            toString postDWk ++ ", " ++ toString postDWk ++ "), minval=-scale, maxval=scale),\n" ++
+          "                   jnp.ones(" ++ toString mid ++ "), jnp.zeros(" ++ toString mid ++ ")))\n"
+      -- Project 1x1
+      code := code ++ emitConvBnInit s!"UIB project {mid}→{oc}" mid oc 1
     | .fusedMbConv ic oc expand kSize _ n useSE =>
       let emitFusedBlock (blockIc blockOc : Nat) : String := Id.run do
         let mid := if expand == 1 then blockOc else blockIc * expand
@@ -961,6 +1036,11 @@ private def emitForward (spec : NetSpec) : String := Id.run do
         toString stride ++ ", " ++ toString expandCh ++ ", " ++ toString kSize ++ ", " ++
         (if useSE then "True" else "False") ++ ", " ++
         (if useHSwish then "True" else "False") ++ ")\n"
+      pidx := pidx + nP
+    | .uib _ic _oc _expand stride preDWk postDWk =>
+      let nP := (if preDWk > 0 then 1 else 0) + 1 + (if postDWk > 0 then 1 else 0) + 1
+      code := code ++ "    x = uib_block(params, x, " ++ toString pidx ++ ", " ++
+        toString stride ++ ", " ++ toString preDWk ++ ", " ++ toString postDWk ++ ")\n"
       pidx := pidx + nP
     | .fusedMbConv _ic _oc expand kSize stride n useSE =>
       let nPerBlock (blockExpand : Nat) (se : Bool) :=

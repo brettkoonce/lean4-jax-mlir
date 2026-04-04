@@ -46,3 +46,6 @@ lean_exe «vit-tiny» where
 
 lean_exe «efficientnet-v2s» where
   root := `MainEfficientNetV2
+
+lean_exe «mobilenet-v4» where
+  root := `MainMobilenetV4
