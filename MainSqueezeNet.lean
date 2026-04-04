@@ -29,11 +29,11 @@ def squeezenet : NetSpec where
 def squeezenetConfig : TrainConfig where
   learningRate := 0.001
   batchSize    := 192
-  epochs       := 50
+  epochs       := 80
   useAdam      := true
-  weightDecay  := 0.0001
+  weightDecay  := 0.001
   cosineDecay  := true
-  warmupEpochs := 3
+  warmupEpochs := 5
 
 def main (args : List String) : IO Unit :=
   runJax squeezenet squeezenetConfig .imagenette
