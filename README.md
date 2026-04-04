@@ -12,19 +12,19 @@ Replicating the models from [Convolutional Neural Networks with Swift for Tensor
 | MNIST MLP | `MainMlp.lean` | 670K | 97.9% | 7.5s | SGD |
 | MNIST CNN | `MainCnn.lean` | 3.5M | 97.6% | 23s | SGD |
 | CIFAR-10 CNN | `MainCifar.lean` | 2.4M | 63.3% | 53s | SGD |
-| SqueezeNet v1.1 | `MainSqueezeNet.lean` | 730K | 72.9% | 20 min | Adam |
-| MobileNet v1 | `MainMobilenet.lean` | 3.2M | 62.8% | 23 min | Adam |
-| MobileNet v2 | `MainMobilenetV2.lean` | 2.2M | 63.4% | 24 min | Adam |
-| MobileNet v3-Large | `MainMobilenetV3.lean` | 3.0M | 62.4% | 22 min | Adam |
-| MobileNet V4-Medium | `MainMobilenetV4.lean` | 4.1M | 64.9% | 22 min | Adam |
-| EfficientNet-B0 | `MainEfficientNet.lean` | 7.2M | 62.7% | 25 min | Adam |
-| EfficientNet V2-S | `MainEfficientNetV2.lean` | 38.2M | 76.0% | 34 min | Adam |
-| **VGG-16-BN** | `MainVgg.lean` | **14.7M** | **86.6%** | **27 min** | Adam |
-| ResNet-34 | `MainResnet.lean` | 21.3M | 80.1% | 26 min | Adam |
-| ResNet-50 | `MainResnet50.lean` | 23.5M | 78.4% | 31 min | Adam |
-| ViT-Tiny | `MainVit.lean` | 5.5M | 65.1% | 22 min | Adam |
+| SqueezeNet v1.1 | `MainSqueezeNet.lean` | 730K | 77.2% | 45 min | Adam |
+| MobileNet v1 | `MainMobilenet.lean` | 3.2M | 79.5% | 47 min | Adam |
+| MobileNet v2 | `MainMobilenetV2.lean` | 2.2M | 79.2% | 48 min | Adam |
+| MobileNet v3-Large | `MainMobilenetV3.lean` | 3.0M | 81.1% | 46 min | Adam |
+| MobileNet V4-Medium | `MainMobilenetV4.lean` | 4.1M | 77.3% | 46 min | Adam |
+| EfficientNet-B0 | `MainEfficientNet.lean` | 7.2M | 82.5% | 48 min | Adam |
+| EfficientNet V2-S | `MainEfficientNetV2.lean` | 38.2M | 83.1% | 58 min | Adam |
+| **VGG-16-BN** | `MainVgg.lean` | **14.7M** | **88.3%** | **42 min** | Adam |
+| ResNet-34 | `MainResnet.lean` | 21.3M | 84.9% | 50 min | Adam |
+| ResNet-50 | `MainResnet50.lean` | 23.5M | 85.0% | 55 min | Adam |
+| ViT-Tiny | `MainVit.lean` | 5.5M | 65.2% | 45 min | Adam |
 
-All Imagenette models trained from scratch on 6× RTX 4060 Ti, no pretrained weights, no cropping augmentation.
+All Imagenette models trained from scratch on 6× RTX 4060 Ti, no pretrained weights, random crop augmentation.
 
 ## Lean specs
 
@@ -150,20 +150,23 @@ For GPU (ROCm):
 
 ```bash
 lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
-      mobilenet-v3 efficientnet-b0 vgg16bn resnet34 resnet50 vit-tiny
+      mobilenet-v3 mobilenet-v4 efficientnet-b0 efficientnet-v2s vgg16bn \
+      resnet34 resnet50 vit-tiny
 
 .lake/build/bin/mnist-mlp       # 7.5s
 .lake/build/bin/mnist-cnn       # 23s on GPU
 .lake/build/bin/cifar-cnn       # 53s on GPU
-.lake/build/bin/squeezenet      # 13 min on 6× GPU
-.lake/build/bin/mobilenet-v1    # 15 min on 6× GPU
-.lake/build/bin/mobilenet-v2    # 15 min on 6× GPU
-.lake/build/bin/mobilenet-v3    # 14 min on 6× GPU
-.lake/build/bin/efficientnet-b0 # 16 min on 6× GPU
-.lake/build/bin/vgg16bn         # 27 min on 6× GPU
-.lake/build/bin/resnet34        # 26 min on 6× GPU
-.lake/build/bin/resnet50        # 31 min on 6× GPU
-.lake/build/bin/vit-tiny        # 22 min on 6× GPU
+.lake/build/bin/squeezenet      # 45 min on 6× GPU
+.lake/build/bin/mobilenet-v1    # 47 min on 6× GPU
+.lake/build/bin/mobilenet-v2    # 48 min on 6× GPU
+.lake/build/bin/mobilenet-v3    # 46 min on 6× GPU
+.lake/build/bin/mobilenet-v4    # 46 min on 6× GPU
+.lake/build/bin/efficientnet-b0 # 48 min on 6× GPU
+.lake/build/bin/efficientnet-v2s # 58 min on 6× GPU
+.lake/build/bin/vgg16bn         # 42 min on 6× GPU
+.lake/build/bin/resnet34        # 50 min on 6× GPU
+.lake/build/bin/resnet50        # 55 min on 6× GPU
+.lake/build/bin/vit-tiny        # 45 min on 6× GPU
 
 # Custom data dir
 .lake/build/bin/mnist-mlp /path/to/data
@@ -173,9 +176,9 @@ lake build mnist-mlp mnist-cnn cifar-cnn squeezenet mobilenet-v1 mobilenet-v2 \
 ## Project structure
 
 ```
-LeanJax.lean              Types + JAX codegen + runner (~1100 lines)
-Main*.lean                Model specs (12 architectures)
-lakefile.lean             Build config (12 executables, 1 library)
+LeanJax.lean              Types + JAX codegen + runner (~1200 lines)
+Main*.lean                Model specs (15 architectures)
+lakefile.lean             Build config (15 executables, 1 library)
 download_mnist.sh         Download MNIST dataset
 download_cifar.sh         Download CIFAR-10 dataset
 download_imagenette.sh    Download + preprocess Imagenette
