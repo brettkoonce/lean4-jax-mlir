@@ -71,4 +71,9 @@ def sliceLabels (labels : ByteArray) (start count : Nat) : ByteArray :=
 @[extern "lean_f32_cifar_batch"]
 opaque cifarBatch (raw : @& ByteArray) (start : USize) (count : USize) : IO ByteArray
 
+/-- Load Imagenette binary file. Returns (images f32 ByteArray, labels i32 ByteArray, count).
+    Images are normalized with ImageNet mean=[0.485,0.456,0.406] std=[0.229,0.224,0.225]. -/
+@[extern "lean_f32_load_imagenette"]
+opaque loadImagenette (path : @& String) : IO (ByteArray × ByteArray × Nat)
+
 end F32

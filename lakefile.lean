@@ -42,6 +42,12 @@ lean_exe «cifar-cnn» where
 lean_exe «resnet34» where
   root := `MainResnet
 
+lean_exe «resnet34-train» where
+  root := `MainResnetTrain
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-Wl,--allow-shlib-undefined"]
+
 lean_exe «resnet50» where
   root := `MainResnet50
 
@@ -99,8 +105,17 @@ lean_exe «test-train» where
     "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
+lean_exe «test-iree-load» where
+  root := `TestIreeLoad
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-Wl,--allow-shlib-undefined"]
+
 lean_exe «test-resnet-fwd» where
   root := `TestResnetForward
+
+lean_exe «test-resnet-residual» where
+  root := `TestResnetResidual
 
 lean_exe «test-codegen-ts» where
   root := `TestCodegenTrainStep

@@ -152,3 +152,46 @@ LEAN_EXPORT lean_obj_res lean_f32_load_idx_labels(b_lean_obj_arg path_obj, lean_
     lean_ctor_set(pair, 1, lean_usize_to_nat((size_t)n));
     return lean_io_result_mk_ok(pair);
 }
+
+// ---- Imagenette binary -> f32 ByteArray (ImageNet mean/std normalized) ----
+// Binary: 4-byte count (LE u32), per-sample: 1 byte label + 224*224*3 bytes (CHW, uint8)
+// Returns (images ByteArray, labels ByteArray, count Nat)
+LEAN_EXPORT lean_obj_res lean_f32_load_imagenette(b_lean_obj_arg path_obj, lean_obj_arg w) {
+    (void)w;
+    const char* path = lean_string_cstr(path_obj);
+    FILE* f = fopen(path, "rb");
+    if (!f) return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string("cannot open imagenette file")));
+    uint32_t file_count;
+    if (fread(&file_count, 4, 1, f) != 1) { fclose(f); return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string("bad header"))); }
+    uint32_t count = file_count;
+    const size_t pix = 3 * 224 * 224;
+    size_t img_bytes = (size_t)count * pix * 4;
+    size_t lbl_bytes = (size_t)count * 4;
+    lean_object* img_ba = lean_alloc_sarray(1, img_bytes, img_bytes);
+    lean_object* lbl_ba = lean_alloc_sarray(1, lbl_bytes, lbl_bytes);
+    float* img = (float*)lean_sarray_cptr(img_ba);
+    uint8_t* lbl = lean_sarray_cptr(lbl_ba);
+    const float mean[3] = {0.485f, 0.456f, 0.406f};
+    const float istd[3] = {1.0f/0.229f, 1.0f/0.224f, 1.0f/0.225f};
+    uint8_t* buf = (uint8_t*)malloc(1 + pix);
+    for (uint32_t i = 0; i < count; i++) {
+        if (fread(buf, 1, 1 + pix, f) != 1 + pix) { free(buf); fclose(f);
+            return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string("short read"))); }
+        lbl[i*4]=buf[0]; lbl[i*4+1]=0; lbl[i*4+2]=0; lbl[i*4+3]=0;
+        float* dst = img + (size_t)i * pix;
+        for (int ch = 0; ch < 3; ch++) {
+            float m = mean[ch], s = istd[ch];
+            for (int j = 0; j < 224*224; j++)
+                dst[ch*224*224+j] = (buf[1+ch*224*224+j]/255.0f - m) * s;
+        }
+    }
+    free(buf); fclose(f);
+    // ByteArray × ByteArray × Nat = Prod ByteArray (Prod ByteArray Nat)
+    lean_object* inner = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(inner, 0, lbl_ba);
+    lean_ctor_set(inner, 1, lean_usize_to_nat((size_t)count));
+    lean_object* outer = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(outer, 0, img_ba);
+    lean_ctor_set(outer, 1, inner);
+    return lean_io_result_mk_ok(outer);
+}
