@@ -51,7 +51,10 @@ def paramShapes : Array (Array Nat) := Id.run do
     | _ => pure ()
   return shapes
 
-def shapesBA : ByteArray := packShapes paramShapes
+-- Full shapes: params + velocity buffers (same shapes)
+def allShapes : Array (Array Nat) := paramShapes ++ paramShapes
+def shapesBA : ByteArray := packShapes allShapes
+def nTotal : Nat := 2 * nParams  -- params + velocities
 
 def xShape (batch : Nat) : ByteArray :=
   packXShape #[batch, 3 * 224 * 224]
@@ -118,19 +121,24 @@ def main (args : List String) : IO Unit := do
     else
       si := si + 1
   let params := F32.concat paramParts
-  IO.eprintln s!"  {F32.size params} floats ({params.size / 1024 / 1024} MB)"
+  -- Initialize velocity buffers to zero (same size as params)
+  let velocity ← F32.const (F32.size params).toUSize 0.0
+  IO.eprintln s!"  {F32.size params} params + {F32.size velocity} velocity ({(params.size + velocity.size) / 1024 / 1024} MB)"
 
-  -- Training loop
+  -- Training loop: pack params++velocity, pass through FFI, unpack
   let batchN : Nat := 16
   let batch : USize := 16
-  let epochs := 25
+  let epochs := 80
   let bpE := nTrain / batchN
   let pixelsPerImage := 3 * 224 * 224
   let shapes := ResnetLayout.shapesBA
   let xSh := ResnetLayout.xShape batchN
+  let nP := ResnetLayout.nParams
+  let nT := ResnetLayout.nTotal  -- params + velocities
 
-  IO.eprintln s!"step 5: training ({bpE} batches/epoch, batch={batchN})"
+  IO.eprintln s!"step 5: training ({bpE} batches/epoch, batch={batchN}, momentum=0.9)"
   let mut p := params
+  let mut v := velocity
   for epoch in [:epochs] do
     let lr : Float := 0.01 * (1.0 - epoch.toFloat / epochs.toFloat)
     let mut epochLoss : Float := 0.0
@@ -138,13 +146,17 @@ def main (args : List String) : IO Unit := do
     for bi in [:bpE] do
       let xba := F32.sliceImages trainImg (bi * batchN) batchN pixelsPerImage
       let yb := F32.sliceLabels trainLbl (bi * batchN) batchN
+      -- Pack params ++ velocity into one ByteArray
+      let packed := p.append v
       let ts0 ← IO.monoMsNow
       let out ← IreeSession.trainStepF32 sess "jit_resnet34_train_step.main"
-                  p shapes xba xSh yb lr batch
+                  packed shapes xba xSh yb lr batch
       let ts1 ← IO.monoMsNow
-      let loss := F32.extractLoss out ResnetLayout.nParams
+      let loss := F32.extractLoss out nT
       epochLoss := epochLoss + loss
-      p := F32.dropLoss out ResnetLayout.nParams
+      -- Unpack: first nP floats = updated params, next nP = updated velocity
+      p := F32.slice out 0 nP
+      v := F32.slice out nP nP
       if bi < 3 || bi % 100 == 0 then
         IO.eprintln s!"  step {bi}/{bpE}: loss={loss} ({ts1-ts0}ms)"
     let t1 ← IO.monoMsNow
