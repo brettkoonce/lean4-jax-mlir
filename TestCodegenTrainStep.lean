@@ -47,3 +47,6 @@ def main : IO Unit := do
       IO.println s!"{name} compiled ✓"
 
   IO.println "Done."
+
+-- CIFAR generation not in main, just verify it compiles via CLI:
+-- MlirCodegen.generateTrainStep cifarCnn 128 "jit_cifar_train_step"
