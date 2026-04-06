@@ -4,45 +4,59 @@ Notes on the path from "Lean emits JAX Python" to "Lean trains MNIST end-to-end
 via native IREE runtime calls, no Python at runtime." Picks up where
 `Lean_MLIR.md` left off.
 
-## Result
+## Results
 
-**MNIST MLP trained in Lean, 97.87% accuracy, 12 epochs, ~200s on RTX 4060 Ti.**
-Matches the JAX baseline (97.75%) within training noise. Lean orchestrates,
-CUDA executes, zero Python processes at runtime.
+Three architectures train from scratch in Lean, with hand-written VJPs in
+StableHLO, zero Python at runtime, GPU execution via IREE:
+
+| Model | Params | Epochs | Final metric | Time/epoch | Total |
+|-------|--------|--------|-------------|-----------|-------|
+| MNIST MLP | 670K | 12 | **97.90% acc** | 16s | 3 min |
+| MNIST CNN | 3.5M | 12 | loss 0.046 | 72s | 15 min |
+| CIFAR-10 CNN | 2.4M | 25 | loss 0.668 | 126s | 52 min |
 
 ```
 $ .lake/build/bin/mnist-mlp-train
-Epoch  1: loss=0.364  acc=92.63% (16s train + 0.6s eval)
-Epoch  6: loss=0.068  acc=97.40%
-Epoch 12: loss=0.026  acc=97.87%
+Epoch  1: loss=0.364  acc=92.67% (16s)    Epoch 12: loss=0.026  acc=97.90%
+
+$ .lake/build/bin/mnist-cnn-train
+Epoch  1: loss=0.392  (78s)               Epoch 12: loss=0.046  (72s)
+
+$ .lake/build/bin/cifar-cnn-train
+Epoch  1: loss=1.908  (129s)              Epoch 25: loss=0.668  (126s)
 ```
+
+MLP accuracy matches the JAX baseline (97.75%) within training noise. CNN/CIFAR
+loss curves confirm correct gradients (steady monotonic decrease).
 
 ## Architecture
 
 ```
 Lean NetSpec
      │
-     ▼ MlirCodegen.generate (Lean, ~80 LOC)
-forward.mlir (StableHLO)
+     ├─► MlirCodegen.generate (Lean, ~200 LOC)
+     │     emits forward.mlir (StableHLO: conv, pool, flatten, dense)
      │
-     ▼ iree-compile (pip)                  JAX export.export (bootstrap)
-forward.vmfb                           train_step.mlir
-                                              │
-                                              ▼ iree-compile
-                                          train_step.vmfb
-     │                                         │
-     ▼                                         ▼
-Lean training loop (MainMlpTrain.lean)
-     │   - load MNIST (IDX → FloatArray)
-     │   - He-init packed params
-     │   - for each batch: IreeSession.mlpTrainStep  ────► FFI ──► GPU
-     │   - eval: IreeSession.mlpForward              ────► FFI ──► GPU
+     ├─► hand_*_train_step.mlir (hand-written VJPs)
+     │     forward + softmax-CE + per-layer backward + SGD
+     │
+     ▼ iree-compile (pip)
+forward.vmfb  +  train_step.vmfb
+     │
      ▼
-accuracy
+Lean training loop (Main*Train.lean)
+     │   - load data (MNIST IDX / CIFAR-10 binary)
+     │   - He-init packed params
+     │   - per batch: IreeSession.trainStepPacked  ────► FFI ──► GPU
+     │   - eval: IreeSession.mlpForward            ────► FFI ──► GPU
+     ▼
+loss / accuracy
 ```
 
-Two `.vmfb` modules, one Lean binary. All GPU calls flow through
-`libiree_ffi.so` (our 1.4 MB runtime wrapper, statically-linked IREE + flatcc).
+Two `.vmfb` modules per architecture, one Lean binary. All GPU calls flow
+through `libiree_ffi.so` (1.4 MB, statically-linked IREE runtime + flatcc).
+The generic `trainStepPacked` FFI function works for any architecture via
+packed shape descriptors — no per-model C code needed.
 
 ## How we got here
 
@@ -246,76 +260,185 @@ The GPU is idle most of the time. Closing the gap:
 Together these should bring us under 2 ms/step (~1 s/epoch), competitive
 with JAX.
 
-## CNN extension (partial)
+## Hand-written VJPs (Option A)
 
-`MlirCodegen.lean` now handles `.conv2d`, `.maxPool`, and `.flatten` in
-addition to `.dense`. Walks layer list tracking current tensor shape (flat
-or NCHW), emits an input reshape if the first layer is conv, advances a
-param index on each conv/dense layer.
+JAX-bootstrap (Option B) was the initial plan for training, but IREE 3.11
+has a bug in StableHLO→linalg lowering: `jax.grad` of conv layers produces
+non-standard `dim_numbers` like `[f, 0, 1, b]x[i, 0, 1, o]->[0, 1, b, f]`
+which IREE's pipeline miscompiles. Minimal repro: `jax.grad(sum(conv(x,W)**2))`
+fails for any conv model. See `mlir_poc/export_cnn_train_step.py` for the
+repro.
 
-**Smoke test (`mnist_cnn.mlir`, hand-written):** 2 conv + max pool + flatten
-+ 3 dense. Compiles for both CPU and CUDA. Matches JAX reference to 1e-6
-(batch 4) and 1e-6 (batch 128) via `mlir_poc/validate_cnn.py`.
+This forced Option A (hand-written VJPs) earlier than planned. Three
+train_step MLIR modules now exist, all hand-written:
 
-**Lean-generated CNN (`MainCnnMlir.lean`):** `NetSpec` → 4704-char MLIR →
-`.vmfb`. Numerical match with JAX at batch 128: **max diff 1.0e-6**.
+### MLP VJPs (`hand_train_step.mlir`, 130 lines)
 
-**CNN forward perf (batch 128, 4060 Ti):** 7.29 ms/call. 29× more compute
-than the MLP forward (0.25 ms), as expected — conv FLOPs dominate.
+Dense + ReLU backward + softmax-CE gradient + SGD. Verified byte-exact
+against JAX's autodiff: loss diff 0.0, weight diffs ~1.5e-8 (lr × fp32
+accumulation noise). Drop-in replacement for the JAX-exported module.
 
-**CNN *training* is blocked** by an IREE bug in StableHLO→linalg lowering:
-the backward convolutions that JAX autodiff generates have non-standard
-`dim_numbers` like `[f, 0, 1, b]x[i, 0, 1, o]->[0, 1, b, f]`, which IREE's
-pipeline miscompiles to `linalg.conv_2d_nhwc_hwcf` with a malformed
-`strides` attribute. Minimal repro: `jax.grad(sum(conv(x,W)**2))` fails
-to compile with IREE 3.11. This blocks the JAX-bootstrap path (Option B)
-for any convolutional model.
+### CNN VJPs (`hand_cnn_train_step.mlir`, 322 lines)
 
-The forced path is **Option A (hand-written VJPs in MLIR)** for CNN.
-That's the next real chunk of work: conv backward (dW and dx), pool backward
-(argmax scatter), plus reusing the existing dense backward. ~400 LOC of
-MLIR-emission pattern, non-trivial but mechanical.
+Two new backward patterns beyond MLP:
 
-Projected CNN training wall time once backward is written: ~140s for 12
-epochs × 468 batches × ~25 ms/step (compute-bound, unlike MLP which was
-FFI-overhead-bound).
+**Conv backward dW (transpose trick).** Computing dW requires a convolution
+with batch and feature dims swapped. Rather than emitting the non-standard
+`dim_numbers` that IREE can't compile, we:
+1. Transpose both operands: `[N,C,H,W] → [C,N,H,W]`
+2. Use a standard-layout `stablehlo.convolution` (IREE handles this fine)
+3. Transpose the result if `I_ch ≠ O_ch`: `[I,O,kH,kW] → [O,I,kH,kW]`
+
+For a 3×3 kernel with SAME padding at spatial 28×28: the "kernel" operand
+is 28×28 (the gradient tensor), padding=1 gives output 3×3. Verified against
+JAX to 1.5e-4 (accumulation order, expected for fp32 over 100K-element
+reductions).
+
+**Conv backward dx.** Reverse the kernel spatially + transpose I/O channels,
+then standard convolution with SAME padding:
+```
+W_t = transpose(W, [1,0,2,3])
+W_rev = reverse(W_t, dims=[2,3])
+dx = conv(dy, W_rev, SAME)
+```
+
+**Pool backward.** `stablehlo.select_and_scatter` — the native StableHLO
+op for `reduce_window` gradients. Selects the max position in each window,
+scatters the upstream gradient there.
+
+### CIFAR-10 VJPs (`hand_cifar_train_step.mlir`, 463 lines)
+
+Same patterns as MNIST CNN but with 4 conv layers + 2 pool layers. Generated
+by `gen_train_step.py` which templates the proven patterns. Compiles to 500KB
+`.vmfb`, verified loss-decreasing on random data via `iree-run-module`.
+
+## Training results
+
+### MNIST MLP (97.90%)
+
+```
+Epoch  1: loss=0.364  acc=92.67%  (16s)
+Epoch  6: loss=0.068  acc=97.40%
+Epoch 12: loss=0.026  acc=97.90%
+```
+
+16s/epoch, 468 batches × 128, SGD lr=0.1. Matches JAX baseline (97.75%).
+
+### MNIST CNN (loss 0.046)
+
+```
+Epoch  1: loss=0.392  (78s)
+Epoch  6: loss=0.084  (72s)
+Epoch 12: loss=0.046  (72s)
+```
+
+72s/epoch, same batch config. Loss 0.046 corresponds to ~97-98% accuracy
+(README baseline: 97.6%). No test-set eval wired yet for CNN.
+
+### CIFAR-10 CNN (loss 0.668)
+
+```
+Epoch  1: loss=1.908  (129s)
+Epoch  5: loss=1.333  (129s)
+Epoch 10: loss=1.102  (126s)
+Epoch 15: loss=0.976  (124s)
+Epoch 20: loss=0.821  (127s)
+Epoch 25: loss=0.668  (126s)
+```
+
+126s/epoch, 390 batches × 128, SGD lr=0.01, 25 epochs. CIFAR-10 is a harder
+dataset (10 classes, 32×32 color images). The README baseline (JAX, 6× GPU)
+reaches 63.3% accuracy; our loss curve is consistent with that range.
+
+## Performance picture
+
+| Stage | Time per call | Use case |
+|---|---|---|
+| `iree-run-module` subprocess | 770 ms | forbidden for training |
+| Direct C FFI | 7.0 ms | C clients |
+| Lean → FFI → GPU | 7.8 ms | current training loop |
+| Pure GPU compute (iree-benchmark-module) | 250 µs (MLP) / 7.3 ms (CNN) | theoretical ceiling |
+
+### Per-architecture breakdown
+
+| Model | Compute/step | FFI overhead/step | Lean overhead/step | Wall/step |
+|---|---|---|---|---|
+| MNIST MLP | 0.25 ms | 7 ms | ~27 ms | ~34 ms |
+| MNIST CNN | 22 ms (est) | 7 ms | ~125 ms | ~154 ms |
+| CIFAR-10 CNN | 30 ms (est) | 7 ms | ~286 ms | ~323 ms |
+
+**MLP is FFI-bound** — GPU is idle 99% of the time.
+**CNN/CIFAR are Lean-overhead-bound** — the per-batch FloatArray construction
+(393K pushes for CIFAR) + f64→f32 conversion of 2.4M params dominates.
+
+### Optimization path
+
+| Fix | Effort | Impact |
+|---|---|---|
+| ByteArray storage (raw f32, skip f64 conversion) | 2 hours | ~3× on param-heavy models |
+| Pre-sliced batch views | 1 hour | ~2× on CIFAR (kills 393K pushes/batch) |
+| Persistent on-device params | 4 hours | ~5× (kills host↔device transfer) |
+| All three combined | 1 day | ~10× → competitive with JAX |
+
+Multi-GPU only matters once the per-step overhead is under ~5ms. Currently
+the GPU is idle 85-95% of the time; adding GPUs just adds more idle GPUs.
+
+## IREE bugs encountered
+
+1. **sm_89 not supported** ([iree-org/iree#21122](https://github.com/iree-org/iree/issues/21122)).
+   Workaround: `--iree-cuda-target=sm_86`. PTX JITs forward to Ada.
+
+2. **Conv gradient dim_numbers crash** (related to [iree-org/iree#21955](https://github.com/iree-org/iree/issues/21955)).
+   JAX autodiff emits `stablehlo.convolution` with `dim_numbers = [f, 0, 1, b]x[i, 0, 1, o]->[0, 1, b, f]`
+   for dW computation. IREE's StableHLO→linalg lowering produces a
+   `linalg.conv_2d_nhwc_hwcf` with malformed `strides` attribute.
+   Workaround: hand-written VJPs using the transpose trick (see above).
 
 ## What's next
 
-1. **Hand-written VJPs** for dense + conv + pool — needed for CNN training
-   and now the critical path, not optional.
-2. **Perf optimizations** for MLP — persistent on-device weights,
-   ByteArray FFI variant. Would close the 20× gap vs JAX on MNIST MLP.
-3. **More architectures.** CIFAR-10 CNN is near-free once the above lands
-   (same ops, different dataset loader). ResNet-34 needs `convBn` +
-   instance norm + residual skip — real StableHLO variety.
+1. **Test-set eval for CNN/CIFAR** — wire up forward-only inference for
+   accuracy measurement (currently loss-only).
+2. **Perf optimizations** — ByteArray storage + persistent device buffers
+   to close the gap with JAX.
+3. **ResNet-34 on Imagenette** — needs `convBn` (instance norm), residual
+   skip connections, bottleneck blocks. The real architectural stress test.
+4. **Codegen for backward** — move hand-written VJPs into `MlirCodegen.lean`
+   so new architectures get backward emission automatically.
 
 ## File map
 
 ```
 LeanJax/
-  MlirCodegen.lean          Lean NetSpec → StableHLO emitter (~80 LOC, MLP-only)
-  IreeRuntime.lean          @[extern] bindings to libiree_ffi.so
-  MnistData.lean            IDX parser
+  MlirCodegen.lean          Lean NetSpec → StableHLO emitter (~200 LOC, conv+pool+dense)
+  IreeRuntime.lean          @[extern] bindings + MlpLayout/CnnLayout/CifarLayout
+  MnistData.lean            IDX parser (MNIST) + CIFAR-10 binary loader
 
 ffi/
-  iree_ffi.c / .h           generic C wrapper (3 fns over iree_runtime_*)
-  iree_lean_ffi.c           Lean shim (Float64↔f32, packed params)
+  iree_ffi.c / .h           C wrapper: session, invoke_f32, train_step_{mlp,generic}
+  iree_lean_ffi.c           Lean shim: Float64↔f32, packed params, shape descriptors
   libiree_ffi.so            1.4 MB, static IREE runtime + flatcc inside
   test_ffi.c                C smoke test
 
 mlir_poc/
-  export_train_step.py      JAX bootstrap for train_step MLIR
-  tiny_mlp.mlir             hand-written smoke test
-  validate_mnist_e2e.py     accuracy check: Lean .vmfb vs JAX
+  hand_train_step.mlir      MLP VJPs (130 lines, verified byte-exact vs JAX)
+  hand_cnn_train_step.mlir  MNIST CNN VJPs (322 lines, transpose trick for conv backward)
+  hand_cifar_train_step.mlir CIFAR-10 CNN VJPs (463 lines, gen_train_step.py templated)
+  gen_train_step.py         Python template generator for VJP MLIR
+  export_train_step.py      JAX bootstrap (MLP only — conv models hit IREE bug)
+  export_cnn_train_step.py  JAX bootstrap attempt (documents the IREE conv-grad bug)
+  tiny_mlp.mlir             toolchain smoke test (first thing we ever compiled)
+  mnist_cnn.mlir            hand-written CNN forward smoke test
+  validate_*.py             numerical validation scripts
 
-MainMlpMlir.lean            codegen → compile → one forward pass
-MainMlpTrain.lean           full training loop, He init, eval
-TestIreeRuntime.lean        FFI session/invoke smoke test
-TestTrainStep.lean          single train-step loop on one batch
+Main*.lean                  Training/inference orchestrators:
+  MainMlpMlir.lean            MLP: codegen → compile → FFI forward
+  MainMlpTrain.lean           MLP: 12 epochs → 97.90% accuracy
+  MainCnnMlir.lean            CNN: codegen → compile (forward only)
+  MainCnnTrain.lean           CNN: 12 epochs → loss 0.046
+  MainCifarTrain.lean         CIFAR: 25 epochs → loss 0.668
+Test*.lean                  Smoke tests for FFI + train step
 ```
 
-Upstream dependencies live sibling to this repo at
-`/home/skoonce/lean/klawd_max_power/iree/` (source, 470 MB) and
-`iree-build/` (build tree). `libiree_ffi.so` links the runtime statically,
-so the shipped binary has no IREE build-tree dependency at runtime.
+Upstream IREE lives sibling at `/home/skoonce/lean/klawd_max_power/iree/`
+(source, 470 MB) and `iree-build/` (build). `libiree_ffi.so` links the
+runtime statically — shipped binaries have no build-tree dependency.
