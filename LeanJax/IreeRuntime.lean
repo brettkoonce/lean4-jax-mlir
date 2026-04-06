@@ -42,6 +42,15 @@ opaque mlpTrainStep
   (lr : Float)
   (batch : USize) : IO FloatArray
 
+/-- Generic train step. Shapes are packed ByteArrays (see `packShapes`). -/
+@[extern "lean_iree_train_step_packed"]
+opaque trainStepPacked
+  (sess : @& IreeSession) (fnName : @& String)
+  (params : @& FloatArray) (shapes : @& ByteArray)
+  (x : @& FloatArray) (xShape : @& ByteArray)
+  (y : @& ByteArray)
+  (lr : Float) (batch : USize) : IO FloatArray
+
 end IreeSession
 
 /- Sizes for the packed-params layout. -/
@@ -55,3 +64,40 @@ def nb2 : Nat := 10
 def nParams : Nat := nW0 + nb0 + nW1 + nb1 + nW2 + nb2  -- 669706
 def lossIdx : Nat := nParams
 end MlpLayout
+
+/-- Push a UInt32 as 4 bytes little-endian. -/
+private def pushU32 (ba : ByteArray) (v : Nat) : ByteArray := Id.run do
+  let mut b := ba
+  b := b.push (v % 256).toUInt8
+  b := b.push ((v / 256) % 256).toUInt8
+  b := b.push ((v / 65536) % 256).toUInt8
+  b := b.push ((v / 16777216) % 256).toUInt8
+  return b
+
+/-- Pack param shape descriptors: `[nParams, rank0, d0..., rank1, d1..., ...]` as int32 LE. -/
+def packShapes (shapes : Array (Array Nat)) : ByteArray := Id.run do
+  let mut ba := pushU32 .empty shapes.size
+  for shape in shapes do
+    ba := pushU32 ba shape.size
+    for d in shape do ba := pushU32 ba d
+  return ba
+
+/-- Pack a single shape: `[rank, d0, d1, ...]` as int32 LE (for x input). -/
+def packXShape (dims : Array Nat) : ByteArray := Id.run do
+  let mut ba := pushU32 .empty dims.size
+  for d in dims do ba := pushU32 ba d
+  return ba
+
+namespace CnnLayout
+def paramShapes : Array (Array Nat) := #[
+  #[32, 1, 3, 3], #[32],          -- conv0
+  #[32, 32, 3, 3], #[32],         -- conv1
+  #[6272, 512], #[512],           -- dense0
+  #[512, 512], #[512],            -- dense1
+  #[512, 10], #[10]               -- dense2
+]
+def nParams : Nat := 32*1*3*3 + 32 + 32*32*3*3 + 32 + 6272*512 + 512 + 512*512 + 512 + 512*10 + 10
+def lossIdx : Nat := nParams
+def shapesBA : ByteArray := packShapes paramShapes
+def xShape (batch : Nat) : ByteArray := packXShape #[batch, 784]
+end CnnLayout

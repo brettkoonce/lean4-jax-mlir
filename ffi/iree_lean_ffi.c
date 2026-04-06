@@ -195,3 +195,85 @@ LEAN_EXPORT lean_obj_res lean_iree_mlp_train_step(
   free(W0o); free(b0o); free(W1o); free(b1o); free(W2o); free(b2o);
   return lean_io_result_mk_ok(result);
 }
+
+// ---- Generic train step ----
+// shapes_ba encodes: [n_params(i32), rank0(i32), d0_0(i32), ..., rank1(i32), d1_0(i32), ...]
+// x_shape_ba encodes: [x_rank(i32), xd0(i32), xd1(i32), ...]
+LEAN_EXPORT lean_obj_res lean_iree_train_step_packed(
+    b_lean_obj_arg sess_obj,
+    b_lean_obj_arg fn_name_obj,
+    b_lean_obj_arg params_fa,
+    b_lean_obj_arg shapes_ba,
+    b_lean_obj_arg x_fa,
+    b_lean_obj_arg x_shape_ba,
+    b_lean_obj_arg y_ba,
+    double lr,
+    size_t batch, lean_obj_arg world) {
+  (void)world;
+  iree_ffi_session_t* sess =
+      (iree_ffi_session_t*)lean_get_external_data(sess_obj);
+  const char* fn_name = lean_string_cstr(fn_name_obj);
+
+  // Parse shapes descriptor
+  const int32_t* sp = (const int32_t*)lean_sarray_cptr(shapes_ba);
+  int n_params = sp[0];
+  int32_t* param_ranks = (int32_t*)malloc(n_params * sizeof(int32_t));
+  size_t max_dims = lean_sarray_size(shapes_ba) / 4;
+  int64_t* param_dims_flat = (int64_t*)malloc(max_dims * sizeof(int64_t));
+  int64_t* param_sizes = (int64_t*)malloc(n_params * sizeof(int64_t));
+  int sp_idx = 1, dims_idx = 0;
+  int64_t total_params = 0;
+  for (int i = 0; i < n_params; i++) {
+    int rank = sp[sp_idx++];
+    param_ranks[i] = rank;
+    int64_t sz = 1;
+    for (int d = 0; d < rank; d++) {
+      param_dims_flat[dims_idx] = (int64_t)sp[sp_idx++];
+      sz *= param_dims_flat[dims_idx];
+      dims_idx++;
+    }
+    param_sizes[i] = sz;
+    total_params += sz;
+  }
+
+  // Stage params f64 → f32
+  double const* p_src = lean_float_array_cptr(params_fa);
+  float* p_f = (float*)malloc(total_params * sizeof(float));
+  for (int64_t i = 0; i < total_params; i++) p_f[i] = (float)p_src[i];
+
+  // Parse x shape
+  const int32_t* xsp = (const int32_t*)lean_sarray_cptr(x_shape_ba);
+  int x_rank = xsp[0];
+  int64_t x_dims[8]; int64_t x_total = 1;
+  for (int i = 0; i < x_rank; i++) { x_dims[i] = (int64_t)xsp[1+i]; x_total *= x_dims[i]; }
+
+  // Stage x f64 → f32
+  double const* x_src = lean_float_array_cptr(x_fa);
+  float* x_f = (float*)malloc(x_total * sizeof(float));
+  for (int64_t i = 0; i < x_total; i++) x_f[i] = (float)x_src[i];
+
+  const int32_t* y_ptr = (const int32_t*)lean_sarray_cptr(y_ba);
+  float* p_out = (float*)malloc(total_params * sizeof(float));
+  float loss_f = 0.0f;
+
+  int rc = iree_ffi_train_step_generic(
+      sess, fn_name, (int)batch,
+      n_params, param_ranks, param_dims_flat, param_sizes,
+      p_f, x_rank, x_dims, x_f, y_ptr, (float)lr,
+      p_out, &loss_f);
+
+  free(p_f); free(x_f); free(param_ranks); free(param_dims_flat); free(param_sizes);
+  if (rc != 0) {
+    free(p_out);
+    return lean_io_result_mk_error(
+        lean_mk_io_user_error(lean_mk_string("generic train_step failed")));
+  }
+
+  int64_t n_out = total_params + 1;
+  lean_object* result = lean_alloc_sarray(sizeof(double), n_out, n_out);
+  double* rp = lean_float_array_cptr(result);
+  for (int64_t i = 0; i < total_params; i++) rp[i] = (double)p_out[i];
+  rp[total_params] = (double)loss_f;
+  free(p_out);
+  return lean_io_result_mk_ok(result);
+}

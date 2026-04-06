@@ -52,6 +52,18 @@ int iree_ffi_train_step_mlp(
     float* W2_new, float* b2_new,
     float* loss_out);
 
+// Generic train step for any architecture.
+int iree_ffi_train_step_generic(
+    iree_ffi_session_t* sess, const char* fn_name, int batch,
+    int n_params,
+    const int32_t* param_ranks,
+    const int64_t* param_dims_flat,
+    const int64_t* param_sizes,
+    const float* packed_params,
+    int x_rank, const int64_t* x_dims, const float* x,
+    const int32_t* y, float lr,
+    float* packed_params_out, float* loss_out);
+
 #ifdef __cplusplus
 }
 #endif

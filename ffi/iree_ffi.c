@@ -261,3 +261,69 @@ int iree_ffi_train_step_mlp(
   if (!iree_status_is_ok(s)) { print_status("train_pop", s); return 4; }
   return 0;
 }
+
+int iree_ffi_train_step_generic(
+    iree_ffi_session_t* sess, const char* fn_name, int batch,
+    int n_params,
+    const int32_t* param_ranks,
+    const int64_t* param_dims_flat,
+    const int64_t* param_sizes,
+    const float* packed_params,
+    int x_rank, const int64_t* x_dims, const float* x,
+    const int32_t* y, float lr,
+    float* packed_params_out, float* loss_out) {
+
+  iree_runtime_call_t call;
+  iree_status_t s = iree_runtime_call_initialize_by_name(
+      sess->session, iree_make_cstring_view(fn_name), &call);
+  if (!iree_status_is_ok(s)) { print_status("gen_train_init", s); return 1; }
+
+  // Push param tensors
+  int dims_off = 0;
+  int64_t data_off = 0;
+  for (int i = 0; i < n_params && iree_status_is_ok(s); i++) {
+    s = push_input(&call, sess->device,
+                   IREE_HAL_ELEMENT_TYPE_FLOAT_32, 4,
+                   param_ranks[i], &param_dims_flat[dims_off],
+                   packed_params + data_off);
+    dims_off += param_ranks[i];
+    data_off += param_sizes[i];
+  }
+  // x (f32)
+  if (iree_status_is_ok(s))
+    s = push_input(&call, sess->device,
+                   IREE_HAL_ELEMENT_TYPE_FLOAT_32, 4,
+                   x_rank, x_dims, x);
+  // y (int32)
+  int64_t d_y[1] = {batch};
+  if (iree_status_is_ok(s))
+    s = push_input(&call, sess->device,
+                   IREE_HAL_ELEMENT_TYPE_INT_32, 4,
+                   1, d_y, y);
+  // lr (scalar f32)
+  if (iree_status_is_ok(s))
+    s = push_input(&call, sess->device,
+                   IREE_HAL_ELEMENT_TYPE_FLOAT_32, 4,
+                   0, NULL, &lr);
+
+  if (!iree_status_is_ok(s)) { print_status("gen_train_push", s);
+    iree_runtime_call_deinitialize(&call); return 2; }
+
+  s = iree_runtime_call_invoke(&call, 0);
+  if (!iree_status_is_ok(s)) { print_status("gen_train_invoke", s);
+    iree_runtime_call_deinitialize(&call); return 3; }
+
+  // Pop output params + loss
+  data_off = 0;
+  for (int i = 0; i < n_params && iree_status_is_ok(s); i++) {
+    s = pop_output(&call, sess->device, param_sizes[i], 4,
+                   packed_params_out + data_off);
+    data_off += param_sizes[i];
+  }
+  if (iree_status_is_ok(s))
+    s = pop_output(&call, sess->device, 1, 4, loss_out);
+
+  iree_runtime_call_deinitialize(&call);
+  if (!iree_status_is_ok(s)) { print_status("gen_train_pop", s); return 4; }
+  return 0;
+}

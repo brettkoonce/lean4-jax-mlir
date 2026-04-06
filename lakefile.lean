@@ -90,6 +90,14 @@ lean_exe «test-train» where
     "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
+lean_exe «mnist-cnn-train» where
+  root := `MainCnnTrain
+  moreLinkArgs := #[
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-Wl,--allow-shlib-undefined"]
+
 lean_exe «mnist-mlp-train» where
   root := `MainMlpTrain
   moreLinkArgs := #[
