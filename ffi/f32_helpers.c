@@ -195,3 +195,39 @@ LEAN_EXPORT lean_obj_res lean_f32_load_imagenette(b_lean_obj_arg path_obj, lean_
     lean_ctor_set(outer, 1, inner);
     return lean_io_result_mk_ok(outer);
 }
+
+// ---- Shuffle images + labels in-place (Fisher-Yates) ----
+// images: n * pixels_per * 4 bytes; labels: n * 4 bytes
+LEAN_EXPORT lean_obj_res lean_f32_shuffle(lean_obj_arg img_obj, lean_obj_arg lbl_obj,
+                                          size_t n, size_t pixels_per, size_t seed,
+                                          lean_obj_arg w) {
+    (void)w;
+    // Ensure exclusive ownership (rc == 1) for in-place mutation
+    if (!lean_is_exclusive(img_obj)) img_obj = lean_copy_byte_array(img_obj);
+    if (!lean_is_exclusive(lbl_obj)) lbl_obj = lean_copy_byte_array(lbl_obj);
+    uint8_t* img = lean_sarray_cptr(img_obj);
+    uint8_t* lbl = lean_sarray_cptr(lbl_obj);
+    size_t img_stride = pixels_per * 4;
+    // Temp buffer for one image
+    uint8_t* tmp = (uint8_t*)malloc(img_stride > 4 ? img_stride : 4);
+    uint64_t rng = seed ^ 0x5DEECE66DUL;
+    for (size_t i = n - 1; i > 0; i--) {
+        rng = rng * 6364136223846793005UL + 1442695040888963407UL;
+        size_t j = (size_t)((rng >> 16) % (i + 1));
+        if (i != j) {
+            // Swap images
+            memcpy(tmp, img + i * img_stride, img_stride);
+            memcpy(img + i * img_stride, img + j * img_stride, img_stride);
+            memcpy(img + j * img_stride, tmp, img_stride);
+            // Swap labels
+            memcpy(tmp, lbl + i * 4, 4);
+            memcpy(lbl + i * 4, lbl + j * 4, 4);
+            memcpy(lbl + j * 4, tmp, 4);
+        }
+    }
+    free(tmp);
+    lean_object* pair = lean_alloc_ctor(0, 2, 0);
+    lean_ctor_set(pair, 0, img_obj);
+    lean_ctor_set(pair, 1, lbl_obj);
+    return lean_io_result_mk_ok(pair);
+}

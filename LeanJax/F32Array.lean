@@ -76,4 +76,9 @@ opaque cifarBatch (raw : @& ByteArray) (start : USize) (count : USize) : IO Byte
 @[extern "lean_f32_load_imagenette"]
 opaque loadImagenette (path : @& String) : IO (ByteArray × ByteArray × Nat)
 
+/-- Shuffle images and labels in-place (Fisher-Yates). Returns (shuffled images, shuffled labels). -/
+@[extern "lean_f32_shuffle"]
+opaque shuffle (images : ByteArray) (labels : ByteArray)
+    (n : USize) (pixelsPerImage : USize) (seed : USize) : IO (ByteArray × ByteArray)
+
 end F32

@@ -136,16 +136,21 @@ def main (args : List String) : IO Unit := do
   let nP := ResnetLayout.nParams
   let nT := ResnetLayout.nTotal  -- params + velocities
 
-  IO.eprintln s!"step 5: training ({bpE} batches/epoch, batch={batchN}, momentum=0.9)"
+  IO.eprintln s!"step 5: training ({bpE} batches/epoch, batch={batchN}, BN, momentum=0.9)"
   let mut p := params
   let mut v := velocity
+  let mut curImg := trainImg
+  let mut curLbl := trainLbl
   for epoch in [:epochs] do
+    -- Shuffle training data each epoch
+    let (sImg, sLbl) ← F32.shuffle curImg curLbl nTrain.toUSize pixelsPerImage.toUSize (epoch + 42).toUSize
+    curImg := sImg; curLbl := sLbl
     let lr : Float := 0.002 * (1.0 - epoch.toFloat / epochs.toFloat)
     let mut epochLoss : Float := 0.0
     let t0 ← IO.monoMsNow
     for bi in [:bpE] do
-      let xba := F32.sliceImages trainImg (bi * batchN) batchN pixelsPerImage
-      let yb := F32.sliceLabels trainLbl (bi * batchN) batchN
+      let xba := F32.sliceImages curImg (bi * batchN) batchN pixelsPerImage
+      let yb := F32.sliceLabels curLbl (bi * batchN) batchN
       -- Pack params ++ velocity into one ByteArray
       let packed := p.append v
       let ts0 ← IO.monoMsNow
