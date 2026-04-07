@@ -56,3 +56,14 @@ inductive DatasetKind where
   | cifar10
   | imagenette
 deriving Repr, BEq
+
+/-- IREE compile flags from environment. Defaults to CUDA (sm_86).
+    Set `IREE_BACKEND=rocm` and `IREE_CHIP=gfx1100` for AMD GPUs. -/
+def ireeCompileArgs (mlirPath outPath : String) : IO (Array String) := do
+  let backend ← (IO.getEnv "IREE_BACKEND").map (·.getD "cuda")
+  let defaultChip := if backend == "rocm" then "gfx1100" else "sm_86"
+  let chip ← (IO.getEnv "IREE_CHIP").map (·.getD defaultChip)
+  return #[mlirPath,
+    s!"--iree-hal-target-backends={backend}",
+    s!"--iree-{backend}-target={chip}",
+    "-o", outPath]

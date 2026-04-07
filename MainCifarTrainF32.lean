@@ -18,9 +18,7 @@ def main : IO Unit := do
   }
   IO.FS.createDirAll ".lake/build"
   IO.FS.writeFile ".lake/build/cifar_cnn.mlir" (MlirCodegen.generate cifarCnn 128)
-  let compileArgs := #[".lake/build/cifar_cnn.mlir",
-    "--iree-hal-target-backends=rocm", "--iree-rocm-target=gfx1100",
-    "-o", ".lake/build/cifar_cnn.vmfb"]
+  let compileArgs ← ireeCompileArgs ".lake/build/cifar_cnn.mlir" ".lake/build/cifar_cnn.vmfb"
   let r ← IO.Process.output { cmd := ".venv/bin/iree-compile", args := compileArgs }
   if r.exitCode != 0 then
     IO.eprintln s!"forward compile failed: {r.stderr}"
@@ -30,9 +28,7 @@ def main : IO Unit := do
   -- Generate + compile train step vmfb
   let trainMlir := MlirCodegen.generateTrainStep cifarCnn 128 "jit_cifar_train_step"
   IO.FS.writeFile ".lake/build/cifar_train_step.mlir" trainMlir
-  let trainCompileArgs := #[".lake/build/cifar_train_step.mlir",
-    "--iree-hal-target-backends=rocm", "--iree-rocm-target=gfx1100",
-    "-o", ".lake/build/cifar_train_step.vmfb"]
+  let trainCompileArgs ← ireeCompileArgs ".lake/build/cifar_train_step.mlir" ".lake/build/cifar_train_step.vmfb"
   let r2 ← IO.Process.output { cmd := ".venv/bin/iree-compile", args := trainCompileArgs }
   if r2.exitCode != 0 then
     IO.eprintln s!"train step compile failed: {r2.stderr}"

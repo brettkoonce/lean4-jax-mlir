@@ -29,9 +29,7 @@ def main : IO Unit := do
   IO.FS.writeFile ".lake/build/resnet34_fwd.mlir" mlir
   IO.println s!"Generated {mlir.length} chars"
 
-  let compileArgs := #[".lake/build/resnet34_fwd.mlir",
-    "--iree-hal-target-backends=rocm", "--iree-rocm-target=gfx1100",
-    "-o", ".lake/build/resnet34_fwd.vmfb"]
+  let compileArgs ← ireeCompileArgs ".lake/build/resnet34_fwd.mlir" ".lake/build/resnet34_fwd.vmfb"
   let r ← IO.Process.output { cmd := ".venv/bin/iree-compile", args := compileArgs }
   if r.exitCode != 0 then
     IO.eprintln s!"Compile failed:\n{r.stderr.take 1000}"

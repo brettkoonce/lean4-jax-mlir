@@ -29,10 +29,7 @@ def main : IO Unit := do
   IO.FS.writeFile mlirPath mlir
   IO.println s!"  wrote {mlirPath} ({mlir.length} chars)"
 
-  let args := #[mlirPath,
-                "--iree-hal-target-backends=rocm",
-                "--iree-rocm-target=gfx1100",
-                "-o", vmfbPath]
+  let args ← ireeCompileArgs mlirPath vmfbPath
   let r ← IO.Process.output { cmd := ".venv/bin/iree-compile", args := args }
   if r.exitCode != 0 then
     IO.eprintln s!"iree-compile failed (exit {r.exitCode})"

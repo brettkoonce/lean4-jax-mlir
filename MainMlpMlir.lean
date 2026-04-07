@@ -30,12 +30,8 @@ def main : IO Unit := do
   IO.println s!"  wrote {mlirPath} ({mlir.length} chars)"
 
   -- Invoke iree-compile. sm_86 is a workaround for IREE issue #21122 which
-  -- blocks sm_89 compilation on this box; PTX JITs forward to Ada at load.
   let ireeCompile := ".venv/bin/iree-compile"
-  let args := #[mlirPath,
-                "--iree-hal-target-backends=rocm",
-                "--iree-rocm-target=gfx1100",
-                "-o", vmfbPath]
+  let args ← ireeCompileArgs mlirPath vmfbPath
   IO.println s!"  $ {ireeCompile} {String.intercalate " " args.toList}"
   let r ← IO.Process.output { cmd := ireeCompile, args := args }
   if r.exitCode != 0 then

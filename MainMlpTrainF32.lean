@@ -20,9 +20,7 @@ def main : IO Unit := do
   IO.FS.createDirAll ".lake/build"
   let mlir := MlirCodegen.generateTrainStep mnistMlp 128
   IO.FS.writeFile ".lake/build/train_step.mlir" mlir
-  let compileArgs := #[".lake/build/train_step.mlir",
-    "--iree-hal-target-backends=rocm", "--iree-rocm-target=gfx1100",
-    "-o", ".lake/build/train_step.vmfb"]
+  let compileArgs ← ireeCompileArgs ".lake/build/train_step.mlir" ".lake/build/train_step.vmfb"
   let r ← IO.Process.output { cmd := ".venv/bin/iree-compile", args := compileArgs }
   if r.exitCode != 0 then
     IO.eprintln s!"compile failed: {r.stderr}"

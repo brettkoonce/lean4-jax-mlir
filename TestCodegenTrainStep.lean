@@ -36,10 +36,10 @@ def main : IO Unit := do
   -- Compile both
   for (name, path) in [("MLP", ".lake/build/gen_train_step.mlir"),
                         ("CNN", ".lake/build/gen_cnn_train_step.mlir")] do
+    let compArgs ← ireeCompileArgs path (path.replace ".mlir" ".vmfb")
     let r ← IO.Process.output {
       cmd := ".venv/bin/iree-compile",
-      args := #[path, "--iree-hal-target-backends=rocm", "--iree-rocm-target=gfx1100",
-                "-o", path.replace ".mlir" ".vmfb"]
+      args := compArgs
     }
     if r.exitCode != 0 then
       IO.eprintln s!"{name} compile failed:\n{r.stderr.take 1000}"

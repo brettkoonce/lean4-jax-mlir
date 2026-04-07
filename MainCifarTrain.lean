@@ -58,9 +58,7 @@ def main : IO Unit := do
   let fwdMlir := MlirCodegen.generate cifarCnn 128
   IO.FS.createDirAll ".lake/build"
   IO.FS.writeFile ".lake/build/cifar_cnn.mlir" fwdMlir
-  let compileArgs := #[".lake/build/cifar_cnn.mlir",
-    "--iree-hal-target-backends=rocm", "--iree-rocm-target=gfx1100",
-    "-o", ".lake/build/cifar_cnn.vmfb"]
+  let compileArgs ← ireeCompileArgs ".lake/build/cifar_cnn.mlir" ".lake/build/cifar_cnn.vmfb"
   let r ← IO.Process.output { cmd := ".venv/bin/iree-compile", args := compileArgs }
   if r.exitCode != 0 then
     IO.eprintln s!"forward compile failed: {r.stderr}"
