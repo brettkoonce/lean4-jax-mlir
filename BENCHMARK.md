@@ -61,7 +61,7 @@ Report: ms/step, epoch time, loss curve.
 |---|---|---|---|
 | MNIST MLP (12 ep) | ~17s | ~36ms | 0.026 |
 | MNIST CNN BN (15 ep) | ~96s | ~205ms | 0.011 |
-| CIFAR CNN BN (30 ep) | ~104s | ~267ms | training... |
+| CIFAR CNN BN (30 ep) | ~99s | ~254ms | 0.035 |
 | ResNet-34 (80 ep) | ~24min | ~2430ms | training (0.34 @ ep7) |
 
 ## Notes
