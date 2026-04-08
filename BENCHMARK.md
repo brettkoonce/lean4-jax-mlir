@@ -60,10 +60,11 @@ Report: ms/step, epoch time, loss curve.
 
 | Model | Epoch time | ms/step | Loss (final) |
 |---|---|---|---|
-| MNIST MLP (12 ep) | ~17s | ~36ms | 0.026 |
+| MNIST MLP (12 ep) | ~24s | ~52ms | 0.004 |
 | MNIST CNN BN (15 ep) | ~96s | ~205ms | 0.011 |
-| CIFAR CNN BN (30 ep) | ~99s | ~254ms | 0.035 |
+| CIFAR CNN BN (30 ep) | ~105s | ~267ms | 0.035 |
 | ResNet-34 (80 ep) | ~24min | ~2430ms | 0.005 @ ep23 (stopped) |
+| ResNet-50 (80 ep) | ~29min | ~3050ms | training (2.50 @ ep1) |
 
 ## CPU results (Xeon w5-2455X, llvm-cpu backend)
 

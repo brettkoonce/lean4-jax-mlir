@@ -44,20 +44,20 @@ lean_exe «resnet34» where
 
 lean_exe «resnet34-train» where
   root := `MainResnetTrain
-  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
-    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «test-forward» where
   root := `TestForward
-  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
-    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «bench-resnet» where
   root := `BenchResnet
-  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
-    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «resnet50» where
@@ -65,8 +65,8 @@ lean_exe «resnet50» where
 
 lean_exe «resnet50-train» where
   root := `MainResnet50Train
-  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
-    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «mobilenet-v1» where
@@ -102,25 +102,25 @@ lean_exe «mnist-cnn-mlir» where
 lean_exe «mnist-mlp-mlir» where
   root := `MainMlpMlir
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «test-iree» where
   root := `TestIreeRuntime
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «test-train» where
   root := `TestTrainStep
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «cifar-bn-train» where
@@ -137,8 +137,8 @@ lean_exe «mnist-cnn-train» where
 
 lean_exe «test-iree-load» where
   root := `TestIreeLoad
-  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
-    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+  moreLinkArgs := #["-L", "/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «test-resnet-fwd» where
@@ -153,39 +153,39 @@ lean_exe «test-codegen-ts» where
 lean_exe «test-f32» where
   root := `TestF32
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «mnist-mlp-train-f32» where
   root := `MainMlpTrainF32
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «cifar-cnn-train-f32» where
   root := `MainCifarTrainF32
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «cifar-cnn-train» where
   root := `MainCifarTrain
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
 
 lean_exe «mnist-mlp-train» where
   root := `MainMlpTrain
   moreLinkArgs := #[
-    "-L/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-L/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-liree_ffi",
-    "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,-rpath,/home/skoonce/lean/klawd_max_power/lean4-jax-mlir/ffi",
     "-Wl,--allow-shlib-undefined"]
