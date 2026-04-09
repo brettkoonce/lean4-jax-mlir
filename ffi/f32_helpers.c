@@ -242,6 +242,23 @@ LEAN_EXPORT lean_obj_res lean_f32_shuffle(lean_obj_arg img_obj, lean_obj_arg lbl
     return lean_io_result_mk_ok(pair);
 }
 
+// ---- EMA update: running = (1-momentum)*running + momentum*batch ----
+LEAN_EXPORT lean_obj_res lean_f32_ema(
+    b_lean_obj_arg running_ba, b_lean_obj_arg batch_ba,
+    double momentum, lean_obj_arg w) {
+    (void)w;
+    size_t n = lean_sarray_size(running_ba) / 4;
+    size_t nbytes = n * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* r = (const float*)lean_sarray_cptr(running_ba);
+    const float* b = (const float*)lean_sarray_cptr(batch_ba);
+    float* o = (float*)lean_sarray_cptr(out);
+    float mom = (float)momentum;
+    float omom = 1.0f - mom;
+    for (size_t i = 0; i < n; i++) o[i] = omom * r[i] + mom * b[i];
+    return lean_io_result_mk_ok(out);
+}
+
 // ---- Random crop: batch of NCHW images from src_size to crop_size ----
 // Input: batch * C * src_h * src_w floats (already normalized).
 // Output: batch * C * crop_h * crop_w floats (random offset per image).

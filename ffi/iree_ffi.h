@@ -64,7 +64,7 @@ int iree_ffi_train_step_generic(
     const int32_t* y, float lr,
     float* packed_params_out, float* loss_out);
 
-// Adam train step: like generic but also pushes step counter t.
+// Adam train step: pushes step counter t, pops BN stats after loss.
 int iree_ffi_train_step_adam(
     iree_ffi_session_t* sess, const char* fn_name, int batch,
     int n_params,
@@ -74,7 +74,8 @@ int iree_ffi_train_step_adam(
     const float* packed_params,
     int x_rank, const int64_t* x_dims, const float* x,
     const int32_t* y, float lr, float t,
-    float* packed_params_out, float* loss_out);
+    float* packed_params_out, float* loss_out,
+    int n_bn_layers, const int64_t* bn_sizes, float* bn_stats_out);
 
 #ifdef __cplusplus
 }

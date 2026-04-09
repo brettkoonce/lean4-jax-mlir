@@ -119,7 +119,8 @@ private def emitConv2d (pidx : Nat) (curSSA : String) (curShape : List Nat)
     Params: W{pidx} (kernel), g{pidx} (gamma/scale), bt{pidx} (beta/shift).
     Instance norm: per-sample, per-channel spatial statistics. -/
 private def emitConvBn (pidx : Nat) (curSSA : String) (curShape : List Nat)
-    (ic oc kSize stride : Nat) (relu : Bool := true) : String × String × List Nat := Id.run do
+    (ic oc kSize stride : Nat) (relu : Bool := true) (fixedBN : Bool := false)
+    : String × String × List Nat := Id.run do
   match curShape with
   | [b, _, h, w] =>
     let oH := (h + stride - 1) / stride
@@ -136,37 +137,41 @@ private def emitConvBn (pidx : Nat) (curSSA : String) (curShape : List Nat)
     s := s ++ "        rhs_dilation = array<i64: 1, 1>,\n"
     s := s ++ s!"        window_strides = array<i64: {stride}, {stride}>\n"
     s := s ++ s!"      " ++ "}" ++ s!" : ({tensorTy curShape}, {tensorTy [oc, ic, kSize, kSize]}) -> {tensorTy newShape}\n"
-    -- Batch norm: mean/var via 2-step reduction [2,3] then [0] (IREE can't distribute [0,2,3])
-    let bnN := b * oH * oW
-    s := s ++ s!"    %cbn_zf{pidx} = stablehlo.constant dense<0.0> : tensor<f32>\n"
-    s := s ++ s!"    %cbn_ssp{pidx} = stablehlo.reduce(%cbn{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [2, 3]\n"
-    s := s ++ s!"          : ({tensorTy newShape}, tensor<f32>) -> {tensorTy [b, oc]}\n"
-    s := s ++ s!"    %cbn_sum{pidx} = stablehlo.reduce(%cbn_ssp{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [0]\n"
-    s := s ++ s!"          : ({tensorTy [b, oc]}, tensor<f32>) -> {tensorTy [oc]}\n"
-    s := s ++ s!"    %cbn_N{pidx} = stablehlo.constant dense<{bnN}.0> : {tensorTy [oc]}\n"
-    s := s ++ s!"    %cbn_mean{pidx} = stablehlo.divide %cbn_sum{pidx}, %cbn_N{pidx} : {tensorTy [oc]}\n"
-    s := s ++ s!"    %cbn_mean_bc{pidx} = stablehlo.broadcast_in_dim %cbn_mean{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy newShape}\n"
-    s := s ++ s!"    %cbn_diff{pidx} = stablehlo.subtract %cbn{pidx}, %cbn_mean_bc{pidx} : {tensorTy newShape}\n"
-    -- Variance (also 2-step)
-    s := s ++ s!"    %cbn_sq{pidx} = stablehlo.multiply %cbn_diff{pidx}, %cbn_diff{pidx} : {tensorTy newShape}\n"
-    s := s ++ s!"    %cbn_vssp{pidx} = stablehlo.reduce(%cbn_sq{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [2, 3]\n"
-    s := s ++ s!"          : ({tensorTy newShape}, tensor<f32>) -> {tensorTy [b, oc]}\n"
-    s := s ++ s!"    %cbn_vsum{pidx} = stablehlo.reduce(%cbn_vssp{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [0]\n"
-    s := s ++ s!"          : ({tensorTy [b, oc]}, tensor<f32>) -> {tensorTy [oc]}\n"
-    s := s ++ s!"    %cbn_var{pidx} = stablehlo.divide %cbn_vsum{pidx}, %cbn_N{pidx} : {tensorTy [oc]}\n"
-    -- Normalize
-    s := s ++ s!"    %cbn_eps{pidx} = stablehlo.constant dense<1.0e-5> : {tensorTy [oc]}\n"
-    s := s ++ s!"    %cbn_ve{pidx} = stablehlo.add %cbn_var{pidx}, %cbn_eps{pidx} : {tensorTy [oc]}\n"
+    if fixedBN then
+      -- Use fixed running mean/var from inputs %bn_mean{pidx}, %bn_var{pidx}
+      s := s ++ s!"    %cbn_mean_bc{pidx} = stablehlo.broadcast_in_dim %bn_mean{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy newShape}\n"
+      s := s ++ s!"    %cbn_diff{pidx} = stablehlo.subtract %cbn{pidx}, %cbn_mean_bc{pidx} : {tensorTy newShape}\n"
+      s := s ++ s!"    %cbn_eps{pidx} = stablehlo.constant dense<1.0e-5> : {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_ve{pidx} = stablehlo.add %bn_var{pidx}, %cbn_eps{pidx} : {tensorTy [oc]}\n"
+    else
+      -- Batch norm: mean/var via 2-step reduction [2,3] then [0]
+      let bnN := b * oH * oW
+      s := s ++ s!"    %cbn_zf{pidx} = stablehlo.constant dense<0.0> : tensor<f32>\n"
+      s := s ++ s!"    %cbn_ssp{pidx} = stablehlo.reduce(%cbn{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [2, 3]\n"
+      s := s ++ s!"          : ({tensorTy newShape}, tensor<f32>) -> {tensorTy [b, oc]}\n"
+      s := s ++ s!"    %cbn_sum{pidx} = stablehlo.reduce(%cbn_ssp{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [0]\n"
+      s := s ++ s!"          : ({tensorTy [b, oc]}, tensor<f32>) -> {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_N{pidx} = stablehlo.constant dense<{bnN}.0> : {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_mean{pidx} = stablehlo.divide %cbn_sum{pidx}, %cbn_N{pidx} : {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_mean_bc{pidx} = stablehlo.broadcast_in_dim %cbn_mean{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy newShape}\n"
+      s := s ++ s!"    %cbn_diff{pidx} = stablehlo.subtract %cbn{pidx}, %cbn_mean_bc{pidx} : {tensorTy newShape}\n"
+      s := s ++ s!"    %cbn_sq{pidx} = stablehlo.multiply %cbn_diff{pidx}, %cbn_diff{pidx} : {tensorTy newShape}\n"
+      s := s ++ s!"    %cbn_vssp{pidx} = stablehlo.reduce(%cbn_sq{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [2, 3]\n"
+      s := s ++ s!"          : ({tensorTy newShape}, tensor<f32>) -> {tensorTy [b, oc]}\n"
+      s := s ++ s!"    %cbn_vsum{pidx} = stablehlo.reduce(%cbn_vssp{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [0]\n"
+      s := s ++ s!"          : ({tensorTy [b, oc]}, tensor<f32>) -> {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_var{pidx} = stablehlo.divide %cbn_vsum{pidx}, %cbn_N{pidx} : {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_eps{pidx} = stablehlo.constant dense<1.0e-5> : {tensorTy [oc]}\n"
+      s := s ++ s!"    %cbn_ve{pidx} = stablehlo.add %cbn_var{pidx}, %cbn_eps{pidx} : {tensorTy [oc]}\n"
+    -- Normalize + affine (shared path)
     s := s ++ s!"    %cbn_istd{pidx} = stablehlo.rsqrt %cbn_ve{pidx} : {tensorTy [oc]}\n"
     s := s ++ s!"    %cbn_istd_bc{pidx} = stablehlo.broadcast_in_dim %cbn_istd{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy newShape}\n"
     s := s ++ s!"    %cbn_norm{pidx} = stablehlo.multiply %cbn_diff{pidx}, %cbn_istd_bc{pidx} : {tensorTy newShape}\n"
-    -- Affine: gamma * norm + beta
     s := s ++ s!"    %cbn_g_bc{pidx} = stablehlo.broadcast_in_dim %g{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy newShape}\n"
     s := s ++ s!"    %cbn_gn{pidx} = stablehlo.multiply %cbn_norm{pidx}, %cbn_g_bc{pidx} : {tensorTy newShape}\n"
     s := s ++ s!"    %cbn_bt_bc{pidx} = stablehlo.broadcast_in_dim %bt{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy newShape}\n"
     let preSSA := s!"%cbn_pre{pidx}"
     s := s ++ s!"    {preSSA} = stablehlo.add %cbn_gn{pidx}, %cbn_bt_bc{pidx} : {tensorTy newShape}\n"
-    -- ReLU (conditional)
     if relu then
       s := s ++ s!"    %cbn_z{pidx} = stablehlo.constant dense<0.0> : {tensorTy newShape}\n"
       s := s ++ s!"    %cbn_out{pidx} = stablehlo.maximum {preSSA}, %cbn_z{pidx} : {tensorTy newShape}\n"
@@ -236,7 +241,7 @@ private def emitFlatten (pos : Nat) (curSSA : String) (curShape : List Nat)
 /-- Emit a residual block stage: nBlocks basic blocks, first may downsample.
     Returns (code, newSSA, newShape, newPidx). -/
 private def emitResidualBlock (startPidx : Nat) (curSSA : String) (curShape : List Nat)
-    (ic oc nBlocks firstStride : Nat) : String × String × List Nat × Nat := Id.run do
+    (ic oc nBlocks firstStride : Nat) (fixedBN : Bool := false) : String × String × List Nat × Nat := Id.run do
   let needsProj := !(ic == oc && firstStride == 1)
   let mut code := ""
   let mut ssa := curSSA
@@ -248,16 +253,16 @@ private def emitResidualBlock (startPidx : Nat) (curSSA : String) (curShape : Li
     let stride := if bi == 0 then firstStride else 1
     let blockIc := if bi == 0 then ic else oc
     -- conv1: 3×3, stride, relu
-    let (s1, out1, sh1) := emitConvBn p ssa shape blockIc oc 3 stride true
+    let (s1, out1, sh1) := emitConvBn p ssa shape blockIc oc 3 stride true (fixedBN := fixedBN)
     code := code ++ s1; ssa := out1; shape := sh1; p := p + 1
     -- conv2: 3×3, stride 1, NO relu
-    let (s2, out2, _sh2) := emitConvBn p ssa shape oc oc 3 1 false
+    let (s2, out2, _sh2) := emitConvBn p ssa shape oc oc 3 1 false (fixedBN := fixedBN)
     code := code ++ s2; ssa := out2; p := p + 1
     -- Skip connection
     let mut skipSSA := blockIn
     if bi == 0 && needsProj then
       -- 1×1 projection convBn (no relu)
-      let (sp, outp, _) := emitConvBn p blockIn blockInShape ic oc 1 firstStride false
+      let (sp, outp, _) := emitConvBn p blockIn blockInShape ic oc 1 firstStride false (fixedBN := fixedBN)
       code := code ++ sp; skipSSA := outp; p := p + 1
     -- Add + ReLU
     code := code ++ s!"    %rb_add{startPidx}_{bi} = stablehlo.add {ssa}, {skipSSA} : {tensorTy shape}\n"
@@ -269,7 +274,7 @@ private def emitResidualBlock (startPidx : Nat) (curSSA : String) (curShape : Li
 /-- Emit a bottleneck block stage: nBlocks bottleneck blocks (1x1→3x3→1x1).
     mid = oc / 4 is the bottleneck channels. First block may downsample. -/
 private def emitBottleneckBlock (startPidx : Nat) (curSSA : String) (curShape : List Nat)
-    (ic oc nBlocks firstStride : Nat) : String × String × List Nat × Nat := Id.run do
+    (ic oc nBlocks firstStride : Nat) (fixedBN : Bool := false) : String × String × List Nat × Nat := Id.run do
   let mid := oc / 4
   let needsProj := !(ic == oc && firstStride == 1)
   let mut code := ""
@@ -282,18 +287,18 @@ private def emitBottleneckBlock (startPidx : Nat) (curSSA : String) (curShape : 
     let stride := if bi == 0 then firstStride else 1
     let blockIc := if bi == 0 then ic else oc
     -- conv1: 1×1, stride 1, relu (reduce channels)
-    let (s1, out1, sh1) := emitConvBn p ssa shape blockIc mid 1 1 true
+    let (s1, out1, sh1) := emitConvBn p ssa shape blockIc mid 1 1 true (fixedBN := fixedBN)
     code := code ++ s1; ssa := out1; shape := sh1; p := p + 1
     -- conv2: 3×3, stride, relu
-    let (s2, out2, sh2) := emitConvBn p ssa shape mid mid 3 stride true
+    let (s2, out2, sh2) := emitConvBn p ssa shape mid mid 3 stride true (fixedBN := fixedBN)
     code := code ++ s2; ssa := out2; shape := sh2; p := p + 1
     -- conv3: 1×1, stride 1, NO relu (expand channels)
-    let (s3, out3, sh3) := emitConvBn p ssa shape mid oc 1 1 false
+    let (s3, out3, sh3) := emitConvBn p ssa shape mid oc 1 1 false (fixedBN := fixedBN)
     code := code ++ s3; ssa := out3; shape := sh3; p := p + 1
     -- Skip connection
     let mut skipSSA := blockIn
     if bi == 0 && needsProj then
-      let (sp, outp, _) := emitConvBn p blockIn blockInShape ic oc 1 firstStride false
+      let (sp, outp, _) := emitConvBn p blockIn blockInShape ic oc 1 firstStride false (fixedBN := fixedBN)
       code := code ++ sp; skipSSA := outp; p := p + 1
     -- Add + ReLU
     code := code ++ s!"    %bn_add{startPidx}_{bi} = stablehlo.add {ssa}, {skipSSA} : {tensorTy shape}\n"
@@ -323,7 +328,7 @@ private def emitDense (pidx : Nat) (curSSA : String) (batchSize fanIn fanOut : N
   | .relu6 => return (s, s!"%ab{pidx}")
 
 /-- Emit the `@forward` function body walking layers in order. -/
-private def emitForwardBody (spec : NetSpec) (batchSize : Nat) : String := Id.run do
+private def emitForwardBody (spec : NetSpec) (batchSize : Nat) (fixedBN : Bool := false) : String := Id.run do
   let mut code : String := ""
   let mut curSSA : String := "%x"
   let mut curShape : List Nat := [batchSize, inputFlatDim spec]
@@ -362,7 +367,7 @@ private def emitForwardBody (spec : NetSpec) (batchSize : Nat) : String := Id.ru
       curSSA := newSSA
       curShape := newShape
     | .convBn ic oc kSize stride _ =>
-      let (snip, newSSA, newShape) := emitConvBn pidx curSSA curShape ic oc kSize stride
+      let (snip, newSSA, newShape) := emitConvBn pidx curSSA curShape ic oc kSize stride (fixedBN := fixedBN)
       code := code ++ snip
       curSSA := newSSA
       curShape := newShape
@@ -373,13 +378,13 @@ private def emitForwardBody (spec : NetSpec) (batchSize : Nat) : String := Id.ru
       curSSA := newSSA
       curShape := newShape
     | .residualBlock ic oc nBlocks firstStride =>
-      let (snip, newSSA, newShape, newPidx) := emitResidualBlock pidx curSSA curShape ic oc nBlocks firstStride
+      let (snip, newSSA, newShape, newPidx) := emitResidualBlock pidx curSSA curShape ic oc nBlocks firstStride (fixedBN := fixedBN)
       code := code ++ snip
       curSSA := newSSA
       curShape := newShape
       pidx := newPidx
     | .bottleneckBlock ic oc nBlocks firstStride =>
-      let (snip, newSSA, newShape, newPidx) := emitBottleneckBlock pidx curSSA curShape ic oc nBlocks firstStride
+      let (snip, newSSA, newShape, newPidx) := emitBottleneckBlock pidx curSSA curShape ic oc nBlocks firstStride (fixedBN := fixedBN)
       code := code ++ snip
       curSSA := newSSA
       curShape := newShape
@@ -489,6 +494,157 @@ def generate (spec : NetSpec) (batchSize : Nat) : String :=
   s!"module @{sanitize spec.name} " ++ "{\n" ++
   "  " ++ emitForwardSig spec batchSize ++ " {\n" ++
   emitForwardBody spec batchSize ++
+  "  }\n" ++
+  "}\n"
+
+/-- Collect (pidx, oc) pairs for every convBn layer (including those inside residual/bottleneck blocks). -/
+def collectBnLayers (spec : NetSpec) : Array (Nat × Nat) := Id.run do
+  let mut result : Array (Nat × Nat) := #[]
+  let mut pidx : Nat := 0
+  for l in spec.layers do
+    match l with
+    | .dense _ _ _ => pidx := pidx + 1
+    | .conv2d _ _ _ _ _ => pidx := pidx + 1
+    | .convBn _ oc _ _ _ =>
+      result := result.push (pidx, oc)
+      pidx := pidx + 1
+    | .residualBlock ic oc nBlocks firstStride =>
+      let needsProj := !(ic == oc && firstStride == 1)
+      for bi in [:nBlocks] do
+        -- conv1
+        result := result.push (pidx, oc)
+        pidx := pidx + 1
+        -- conv2
+        result := result.push (pidx, oc)
+        pidx := pidx + 1
+        if bi == 0 && needsProj then
+          -- projection
+          result := result.push (pidx, oc)
+          pidx := pidx + 1
+    | .bottleneckBlock ic oc nBlocks firstStride =>
+      let mid := oc / 4
+      let needsProj := !(ic == oc && firstStride == 1)
+      for bi in [:nBlocks] do
+        -- 1x1 reduce
+        result := result.push (pidx, mid)
+        pidx := pidx + 1
+        -- 3x3
+        result := result.push (pidx, mid)
+        pidx := pidx + 1
+        -- 1x1 expand
+        result := result.push (pidx, oc)
+        pidx := pidx + 1
+        if bi == 0 && needsProj then
+          -- projection
+          result := result.push (pidx, oc)
+          pidx := pidx + 1
+    | _ => pure ()
+  return result
+
+/-- Emit function signature for forward_eval: same as forward but with
+    bn_mean/bn_var params appended for each BN layer. -/
+private def emitForwardEvalSig (spec : NetSpec) (batchSize : Nat) : String := Id.run do
+  let inDim := inputFlatDim spec
+  let mut params : String := s!"%x: {tensorTy [batchSize, inDim]}"
+  let mut outShape : List Nat := [batchSize, inDim]
+  let mut curShape : List Nat := [batchSize, inDim]
+  -- Initial reshape if CNN
+  match inputChannels spec with
+  | some ic => curShape := [batchSize, ic, spec.imageH, spec.imageW]
+  | none => pure ()
+  let mut pidx : Nat := 0
+  for l in spec.layers do
+    match l with
+    | .dense fanIn fanOut _ =>
+      params := params ++ s!",\n    %W{pidx}: {tensorTy [fanIn, fanOut]}, %b{pidx}: {tensorTy [fanOut]}"
+      curShape := [batchSize, fanOut]
+      outShape := curShape
+      pidx := pidx + 1
+    | .conv2d ic oc kSize _ _ =>
+      params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, ic, kSize, kSize]}, %b{pidx}: {tensorTy [oc]}"
+      match curShape with
+      | [b, _, h, w] => curShape := [b, oc, h, w]
+      | _ => pure ()
+      outShape := curShape
+      pidx := pidx + 1
+    | .convBn ic oc kSize stride _ =>
+      params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, ic, kSize, kSize]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+      match curShape with
+      | [b, _, h, w] =>
+        curShape := [b, oc, (h + stride - 1) / stride, (w + stride - 1) / stride]
+      | _ => pure ()
+      outShape := curShape
+      pidx := pidx + 1
+    | .residualBlock ic oc nBlocks firstStride =>
+      let needsProj := !(ic == oc && firstStride == 1)
+      match curShape with
+      | [b, _, h, w] =>
+        for bi in [:nBlocks] do
+          let blockIc := if bi == 0 then ic else oc
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, blockIc, 3, 3]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+          pidx := pidx + 1
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, oc, 3, 3]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+          pidx := pidx + 1
+          if bi == 0 && needsProj then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, ic, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+            pidx := pidx + 1
+        curShape := [b, oc, (h + firstStride - 1) / firstStride, (w + firstStride - 1) / firstStride]
+      | _ => pure ()
+      outShape := curShape
+    | .bottleneckBlock ic oc nBlocks firstStride =>
+      let mid := oc / 4
+      let needsProj := !(ic == oc && firstStride == 1)
+      match curShape with
+      | [b, _, h, w] =>
+        for bi in [:nBlocks] do
+          let blockIc := if bi == 0 then ic else oc
+          -- 1x1 reduce
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, blockIc, 1, 1]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+          pidx := pidx + 1
+          -- 3x3
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, mid, 3, 3]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+          pidx := pidx + 1
+          -- 1x1 expand
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+          pidx := pidx + 1
+          if bi == 0 && needsProj then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, ic, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+            pidx := pidx + 1
+        curShape := [b, oc, (h + firstStride - 1) / firstStride, (w + firstStride - 1) / firstStride]
+      | _ => pure ()
+      outShape := curShape
+    | .maxPool _ stride =>
+      match curShape with
+      | [b, c, h, w] =>
+        let oH := (h + stride - 1) / stride
+        let oW := (w + stride - 1) / stride
+        curShape := [b, c, oH, oW]
+      | _ => pure ()
+      outShape := curShape
+    | .globalAvgPool =>
+      match curShape with
+      | [b, c, _, _] => curShape := [b, c]
+      | _ => pure ()
+      outShape := curShape
+    | .flatten =>
+      match curShape with
+      | [b, c, h, w] => curShape := [b, c * h * w]
+      | _ => pure ()
+      outShape := curShape
+    | _ => pure ()
+  -- Append bn_mean / bn_var params for each BN layer
+  let bnLayers := collectBnLayers spec
+  for (p, oc) in bnLayers do
+    params := params ++ s!",\n    %bn_mean{p}: {tensorTy [oc]}, %bn_var{p}: {tensorTy [oc]}"
+  pure s!"func.func @forward_eval(\n    {params}\n  ) -> {tensorTy outShape}"
+
+/-- Generate a StableHLO MLIR module for eval (fixed BN using running mean/var). -/
+def generateEval (spec : NetSpec) (batchSize : Nat) : String :=
+  s!"// {spec.name} eval — Generated by Lean 4 → MLIR (StableHLO)\n" ++
+  s!"// Batch size: {batchSize}, fixedBN: true\n\n" ++
+  s!"module @{sanitize spec.name}_eval " ++ "{\n" ++
+  "  " ++ emitForwardEvalSig spec batchSize ++ " {\n" ++
+  emitForwardBody spec batchSize (fixedBN := true) ++
   "  }\n" ++
   "}\n"
 
@@ -1266,9 +1422,15 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
           vRetTypes := vRetTypes ++ adamTypes[6:]
         | _ => pure ()
     | none => pure ()
-  -- Return order: all params, then all m (1st moment), then all v (2nd moment), then loss
-  let retNames := paramRetNames ++ mRetNames ++ vRetNames |>.push "%loss"
-  let retTypes := paramRetTypes ++ mRetTypes ++ vRetTypes |>.push "tensor<f32>"
+  -- Return order: params, m, v, loss, then BN stats (mean0, var0, mean1, var1, ...)
+  let mut retNames := paramRetNames ++ mRetNames ++ vRetNames |>.push "%loss"
+  let mut retTypes := paramRetTypes ++ mRetTypes ++ vRetTypes |>.push "tensor<f32>"
+
+  -- Append BN mean/var for each BN layer (computed during forward)
+  let bnLayers := collectBnLayers spec
+  for (p, oc) in bnLayers do
+    retNames := retNames.push s!"%cbn_mean{p}" |>.push s!"%cbn_var{p}"
+    retTypes := retTypes.push (tensorTy [oc]) |>.push (tensorTy [oc])
 
   code := code ++ s!"    return {String.intercalate ", " retNames.toList}\n"
   code := code ++ s!"      : {String.intercalate ", " retTypes.toList}\n"
@@ -1477,7 +1639,11 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
     | _ => pure ()
   params := params ++ s!"      %x_flat: {tensorTy [B, inDim]}, %y: tensor<{B}xi32>,\n"
   params := params ++ "      %lr: tensor<f32>, %t: tensor<f32>"
-  let retTypes := paramRetTypes ++ mRetTypes ++ vRetTypes |>.push "tensor<f32>"
+  let mut retTypes := paramRetTypes ++ mRetTypes ++ vRetTypes |>.push "tensor<f32>"
+  -- BN stats return types (mean + var per BN layer)
+  let bnLayers := collectBnLayers spec
+  for (_, oc) in bnLayers do
+    retTypes := retTypes.push (tensorTy [oc]) |>.push (tensorTy [oc])
   pure s!"  func.func @main(\n{params}\n    ) -> ({String.intercalate ", " retTypes.toList})"
 
 /-- Generate a full train_step MLIR module with VJPs. -/

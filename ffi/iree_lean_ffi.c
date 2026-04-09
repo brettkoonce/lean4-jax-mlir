@@ -348,7 +348,9 @@ LEAN_EXPORT lean_obj_res lean_iree_train_step_f32(
   return lean_io_result_mk_ok(result);
 }
 
-// ---- Adam train step (f32, with step counter t) ----
+// ---- Adam train step (f32, with step counter t + BN stats output) ----
+// bnShapes: packed int32 array [n_bn_layers, oc0, oc1, ...] — each oc appears twice (mean + var)
+// Returns: ByteArray of (total_params + 1 + total_bn_stats) floats
 LEAN_EXPORT lean_obj_res lean_iree_train_step_adam_f32(
     b_lean_obj_arg sess_obj,
     b_lean_obj_arg fn_name_obj,
@@ -358,12 +360,14 @@ LEAN_EXPORT lean_obj_res lean_iree_train_step_adam_f32(
     b_lean_obj_arg x_shape_ba,
     b_lean_obj_arg y_ba,
     double lr, double t,
+    b_lean_obj_arg bn_shapes_ba,
     size_t batch, lean_obj_arg world) {
   (void)world;
   iree_ffi_session_t* sess =
       (iree_ffi_session_t*)lean_get_external_data(sess_obj);
   const char* fn_name = lean_string_cstr(fn_name_obj);
 
+  // Parse param shapes
   const int32_t* sp = (const int32_t*)lean_sarray_cptr(shapes_ba);
   int n_params = sp[0];
   int32_t* param_ranks = (int32_t*)malloc(n_params * sizeof(int32_t));
@@ -385,6 +389,21 @@ LEAN_EXPORT lean_obj_res lean_iree_train_step_adam_f32(
     total_params += sz;
   }
 
+  // Parse BN shapes: [n_bn_layers, oc0, oc1, ...]
+  const int32_t* bnsp = (const int32_t*)lean_sarray_cptr(bn_shapes_ba);
+  int n_bn_layers = bnsp[0];
+  int64_t total_bn_stats = 0;
+  int64_t* bn_sizes = NULL;
+  if (n_bn_layers > 0) {
+    bn_sizes = (int64_t*)malloc(n_bn_layers * 2 * sizeof(int64_t));
+    for (int i = 0; i < n_bn_layers; i++) {
+      int64_t oc = (int64_t)bnsp[1 + i];
+      bn_sizes[i * 2] = oc;      // mean size
+      bn_sizes[i * 2 + 1] = oc;  // var size
+      total_bn_stats += oc * 2;
+    }
+  }
+
   const float* p_f = (const float*)lean_sarray_cptr(params_ba);
   const int32_t* xsp = (const int32_t*)lean_sarray_cptr(x_shape_ba);
   int x_rank = xsp[0];
@@ -393,18 +412,22 @@ LEAN_EXPORT lean_obj_res lean_iree_train_step_adam_f32(
   const float* x_f = (const float*)lean_sarray_cptr(x_ba);
   const int32_t* y_ptr = (const int32_t*)lean_sarray_cptr(y_ba);
 
-  size_t n_out_bytes = (total_params + 1) * 4;
+  // Output: params + loss + bn_stats
+  size_t n_out_bytes = (total_params + 1 + total_bn_stats) * 4;
   lean_object* result = lean_alloc_sarray(1, n_out_bytes, n_out_bytes);
   float* rp = (float*)lean_sarray_cptr(result);
   float loss_f = 0.0f;
+  float* bn_out = (total_bn_stats > 0) ? rp + total_params + 1 : NULL;
 
   int rc = iree_ffi_train_step_adam(
       sess, fn_name, (int)batch,
       n_params, param_ranks, param_dims_flat, param_sizes,
       p_f, x_rank, x_dims, x_f, y_ptr, (float)lr, (float)t,
-      rp, &loss_f);
+      rp, &loss_f,
+      n_bn_layers, bn_sizes, bn_out);
 
   free(param_ranks); free(param_dims_flat); free(param_sizes);
+  if (bn_sizes) free(bn_sizes);
   if (rc != 0) {
     lean_dec_ref(result);
     return lean_io_result_mk_error(

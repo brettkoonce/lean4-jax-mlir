@@ -85,6 +85,10 @@ opaque loadImagenetteSized (path : @& String) (imgSize : USize) : IO (ByteArray 
 opaque shuffle (images : ByteArray) (labels : ByteArray)
     (n : USize) (pixelsPerImage : USize) (seed : USize) : IO (ByteArray × ByteArray)
 
+/-- EMA update: running = (1-momentum)*running + momentum*batch. -/
+@[extern "lean_f32_ema"]
+opaque ema (running : @& ByteArray) (batch : @& ByteArray) (momentum : Float) : IO ByteArray
+
 /-- Random crop: batch of NCHW images from src_size to crop_size. -/
 @[extern "lean_f32_random_crop"]
 opaque randomCrop (images : @& ByteArray) (batch : USize) (channels : USize)

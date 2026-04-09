@@ -343,6 +343,7 @@ int iree_ffi_train_step_generic(
 }
 
 // Adam train step: like generic but also pushes step counter t after lr.
+// Also pops n_bn_layers*2 extra BN stat outputs (mean, var pairs) into bn_stats_out.
 int iree_ffi_train_step_adam(
     iree_ffi_session_t* sess, const char* fn_name, int batch,
     int n_params,
@@ -352,7 +353,8 @@ int iree_ffi_train_step_adam(
     const float* packed_params,
     int x_rank, const int64_t* x_dims, const float* x,
     const int32_t* y, float lr, float t,
-    float* packed_params_out, float* loss_out) {
+    float* packed_params_out, float* loss_out,
+    int n_bn_layers, const int64_t* bn_sizes, float* bn_stats_out) {
 
   iree_runtime_call_t call;
   iree_status_t s = iree_runtime_call_initialize_by_name(
@@ -402,6 +404,16 @@ int iree_ffi_train_step_adam(
   }
   if (iree_status_is_ok(s))
     s = pop_output(&call, sess->device, 1, 4, loss_out);
+
+  // Pop BN stats: n_bn_layers pairs of (mean, var) tensors
+  if (bn_stats_out && n_bn_layers > 0) {
+    int64_t bn_off = 0;
+    for (int i = 0; i < n_bn_layers * 2 && iree_status_is_ok(s); i++) {
+      s = pop_output(&call, sess->device, bn_sizes[i], 4,
+                     bn_stats_out + bn_off);
+      bn_off += bn_sizes[i];
+    }
+  }
 
   iree_runtime_call_deinitialize(&call);
   if (!iree_status_is_ok(s)) { print_status("adam_train_pop", s); return 4; }
