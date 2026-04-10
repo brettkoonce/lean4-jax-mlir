@@ -17,7 +17,8 @@ Hardware: AMD Radeon 7900 XTX (gfx1100) via ROCm 7.2 / IREE.
 | EfficientNet-B0 | 7.2M | **87.58%** | MBConv with swish + sigmoid SE |
 | MobileNetV2 | 2.2M | **87.09%** | depthwise separable + inverted residual |
 | MobileNetV3-Large | 3.0M | **86.48%** | exact h-swish + h-sigmoid SE |
-| ViT-Tiny | 5.5M | _in progress_ | patch embed + 12 transformer blocks |
+| ViT-Tiny | 5.5M | **71.70%** | patch embed + 12 transformer blocks (data-hungry) |
+| EfficientNetV2-S | 38.2M | _in progress_ | fusedMbConv + MBConv stages |
 
 ## Per-epoch eval history (running BN stats)
 
@@ -92,6 +93,24 @@ kernel sizes (3×3 and 5×5).
 | 60 | 87.35% |
 | 70 | 87.30% |
 | 80 | **87.58%** |
+
+### ViT-Tiny
+
+Vision Transformer: 16×16 patch embedding → 12 transformer blocks
+(192-dim, 3 heads, 768-dim MLP) → CLS token → dense. Exact tanh-form
+GELU. 5-epoch warmup. Imagenette is too small for ViT to really shine
+(transformers want 100K+ images), but it learns.
+
+| Epoch | Val acc |
+|---|---|
+| 10 | 54.33% |
+| 20 | 57.84% |
+| 30 | 64.40% |
+| 40 | 67.67% |
+| 50 | 69.24% |
+| 60 | 71.18% |
+| 70 | 71.75% |
+| 80 | **71.70%** |
 
 ## Training recipe ablation (ResNet-34)
 
