@@ -8,6 +8,11 @@ package «lean4-jax» where
 lean_lib «LeanJax» where
   roots := #[`LeanJax]
 
+-- Phase 2: Lean → JAX Python codegen + runner. Lives under jax/.
+lean_lib «Jax» where
+  roots := #[`Jax]
+  srcDir := "jax"
+
 -- IREE FFI shim: Lean ↔ C bridge for libiree_ffi.so (see ffi/).
 target ireeLeanFfiO pkg : System.FilePath := do
   let oFile := pkg.buildDir / "ffi" / "iree_lean_ffi.o"
@@ -32,15 +37,19 @@ extern_lib libireeffi pkg := do
 
 lean_exe «mnist-mlp» where
   root := `MainMlp
+  srcDir := "jax"
 
 lean_exe «mnist-cnn» where
   root := `MainCnn
+  srcDir := "jax"
 
 lean_exe «cifar-cnn» where
   root := `MainCifar
+  srcDir := "jax"
 
 lean_exe «resnet34» where
   root := `MainResnet
+  srcDir := "jax"
 
 lean_exe «resnet34-train» where
   root := `MainResnetTrain
@@ -62,6 +71,7 @@ lean_exe «bench-resnet» where
 
 lean_exe «resnet50» where
   root := `MainResnet50
+  srcDir := "jax"
 
 lean_exe «resnet50-train» where
   root := `MainResnet50Train
@@ -71,9 +81,11 @@ lean_exe «resnet50-train» where
 
 lean_exe «mobilenet-v1» where
   root := `MainMobilenet
+  srcDir := "jax"
 
 lean_exe «mobilenet-v2» where
   root := `MainMobilenetV2
+  srcDir := "jax"
 
 lean_exe «mobilenet-v2-train» where
   root := `MainMobilenetV2Train
@@ -89,6 +101,7 @@ lean_exe «efficientnet-train» where
 
 lean_exe «efficientnet-b0» where
   root := `MainEfficientNet
+  srcDir := "jax"
 
 lean_exe «efficientnet-v2-train» where
   root := `MainEfficientNetV2Train
@@ -98,6 +111,7 @@ lean_exe «efficientnet-v2-train» where
 
 lean_exe «mobilenet-v3» where
   root := `MainMobilenetV3
+  srcDir := "jax"
 
 lean_exe «mobilenet-v3-train» where
   root := `MainMobilenetV3Train
@@ -107,9 +121,11 @@ lean_exe «mobilenet-v3-train» where
 
 lean_exe «squeezenet» where
   root := `MainSqueezeNet
+  srcDir := "jax"
 
 lean_exe «vgg16bn» where
   root := `MainVgg
+  srcDir := "jax"
 
 lean_exe «vgg-train» where
   root := `MainVggTrain
@@ -119,6 +135,7 @@ lean_exe «vgg-train» where
 
 lean_exe «vit-tiny» where
   root := `MainVit
+  srcDir := "jax"
 
 lean_exe «vit-tiny-train» where
   root := `MainVitTrain
@@ -128,9 +145,11 @@ lean_exe «vit-tiny-train» where
 
 lean_exe «efficientnet-v2s» where
   root := `MainEfficientNetV2
+  srcDir := "jax"
 
 lean_exe «mobilenet-v4» where
   root := `MainMobilenetV4
+  srcDir := "jax"
 
 lean_exe «mobilenet-v4-train» where
   root := `MainMobilenetV4Train
