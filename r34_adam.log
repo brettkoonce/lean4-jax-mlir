@@ -1,0 +1,37 @@
+ResNet-34: 21289802 params
+Generating train step MLIR...
+  514612 chars
+Compiling vmfbs...
+  forward compiled
+  compiled
+  session loaded
+  train: 9469 images (256×256)
+  21289802 params + m + v (243 MB)
+training: 295 batches/epoch, batch=32, Adam, lr=0.001000, cosine, label_smooth=0.1, wd=1e-4
+  step 0/295: loss=3.581499 (1448ms)
+  step 1/295: loss=4.840736 (1565ms)
+  step 2/295: loss=2.892358 (1446ms)
+  step 100/295: loss=2.215860 (1426ms)
+  step 200/295: loss=1.566532 (1423ms)
+Epoch 1/80: loss=1.812683 lr=0.000333 (424524ms)
+  step 0/295: loss=1.579412 (1418ms)
+  step 1/295: loss=1.416196 (1421ms)
+  step 2/295: loss=1.136843 (1431ms)
+  step 100/295: loss=1.533190 (1419ms)
+  step 200/295: loss=1.308549 (1399ms)
+Epoch 2/80: loss=1.512727 lr=0.000667 (425071ms)
+  step 0/295: loss=1.233691 (1420ms)
+  step 1/295: loss=1.758291 (1407ms)
+  step 2/295: loss=1.270558 (1422ms)
+  step 100/295: loss=1.201028 (1437ms)
+  step 200/295: loss=1.196952 (1400ms)
+Epoch 3/80: loss=1.393462 lr=0.001000 (424540ms)
+  step 0/295: loss=1.336747 (1402ms)
+  step 1/295: loss=0.992534 (1406ms)
+  step 2/295: loss=1.218045 (1407ms)
+  step 100/295: loss=1.311529 (1411ms)
+  step 200/295: loss=1.172731 (1411ms)
+Epoch 4/80: loss=1.266066 lr=0.001000 (424341ms)
+  step 0/295: loss=1.088150 (1406ms)
+  step 1/295: loss=1.322619 (1423ms)
+  step 2/295: loss=1.155361 (1416ms)

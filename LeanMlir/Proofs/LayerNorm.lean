@@ -1,5 +1,5 @@
-import LeanJax.Proofs.Tensor
-import LeanJax.Proofs.BatchNorm
+import LeanMlir.Proofs.Tensor
+import LeanMlir.Proofs.BatchNorm
 
 /-!
 # LayerNorm & GELU

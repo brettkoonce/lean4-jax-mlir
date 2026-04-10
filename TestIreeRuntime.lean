@@ -1,4 +1,4 @@
-import LeanJax.IreeRuntime
+import LeanMlir.IreeRuntime
 
 /-! Smoke test for the Lean→IREE FFI: load .vmfb, run forward once,
     print first 10 logits. Inputs are random but deterministic to match

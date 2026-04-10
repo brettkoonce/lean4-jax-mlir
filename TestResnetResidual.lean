@@ -1,6 +1,6 @@
-import LeanJax.Types
-import LeanJax.Spec
-import LeanJax.MlirCodegen
+import LeanMlir.Types
+import LeanMlir.Spec
+import LeanMlir.MlirCodegen
 
 /-! Test: generate ResNet-34 forward + train step MLIR with real residualBlock layers
     (skip connections, projections) and compile with IREE. -/

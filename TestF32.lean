@@ -1,4 +1,4 @@
-import LeanJax.F32Array
+import LeanMlir.F32Array
 
 def main : IO Unit := do
   IO.println "=== F32 ByteArray Tests ==="

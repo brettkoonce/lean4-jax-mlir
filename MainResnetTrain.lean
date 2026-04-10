@@ -1,8 +1,8 @@
-import LeanJax.IreeRuntime
-import LeanJax.F32Array
-import LeanJax.Types
-import LeanJax.Spec
-import LeanJax.MlirCodegen
+import LeanMlir.IreeRuntime
+import LeanMlir.F32Array
+import LeanMlir.Types
+import LeanMlir.Spec
+import LeanMlir.MlirCodegen
 
 /-! ResNet-34 on Imagenette — full training pipeline.
     Generates train_step MLIR → compiles with IREE → SGD training loop.

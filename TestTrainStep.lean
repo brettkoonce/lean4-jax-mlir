@@ -1,4 +1,4 @@
-import LeanJax.IreeRuntime
+import LeanMlir.IreeRuntime
 
 /-! Single-step train_step test from Lean via FFI. Verifies loss is in the
     expected range for random params + random labels, and that params actually

@@ -1,7 +1,7 @@
-import LeanJax.IreeRuntime
-import LeanJax.MnistData  -- also has CifarData
-import LeanJax.Types
-import LeanJax.MlirCodegen
+import LeanMlir.IreeRuntime
+import LeanMlir.MnistData  -- also has CifarData
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
 
 /-! CIFAR-10 CNN training via hand-written VJPs in IREE.
     Conv²→Pool→Conv²→Pool→Dense³, 2.4M params, SGD lr=0.01, 25 epochs. -/

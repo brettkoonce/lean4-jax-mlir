@@ -1,4 +1,4 @@
-import LeanJax.Types
+import LeanMlir.Types
 /-! Spec helpers: param counting, feature queries, arch display, validation. -/
 
 def Layer.nParams : Layer → Nat

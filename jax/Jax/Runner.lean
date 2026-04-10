@@ -1,5 +1,5 @@
-import LeanJax.Types
-import LeanJax.Spec
+import LeanMlir.Types
+import LeanMlir.Spec
 import Jax.Codegen
 /-! Runner: find Python, generate script, execute training. -/
 

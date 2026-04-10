@@ -1,5 +1,5 @@
-import LeanJax.Types
-import LeanJax.MlirCodegen
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
 
 /-! Test: generate ResNet-34 forward MLIR and compile with IREE.
     This validates convBn (instance norm) + globalAvgPool + strided conv

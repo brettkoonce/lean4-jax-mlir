@@ -1,8 +1,8 @@
-import LeanJax.Proofs.Tensor
-import LeanJax.Proofs.MLP
-import LeanJax.Proofs.Residual
-import LeanJax.Proofs.SE
-import LeanJax.Proofs.LayerNorm
+import LeanMlir.Proofs.Tensor
+import LeanMlir.Proofs.MLP
+import LeanMlir.Proofs.Residual
+import LeanMlir.Proofs.SE
+import LeanMlir.Proofs.LayerNorm
 
 /-!
 # Attention — the Capstone

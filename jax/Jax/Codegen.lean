@@ -1,5 +1,5 @@
-import LeanJax.Types
-import LeanJax.Spec
+import LeanMlir.Types
+import LeanMlir.Spec
 /-! JAX code generator: emit Python training scripts from NetSpec. -/
 
 namespace JaxCodegen

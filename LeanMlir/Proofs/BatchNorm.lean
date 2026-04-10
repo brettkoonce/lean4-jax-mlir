@@ -1,4 +1,4 @@
-import LeanJax.Proofs.Tensor
+import LeanMlir.Proofs.Tensor
 
 /-!
 # Batch Normalization VJP

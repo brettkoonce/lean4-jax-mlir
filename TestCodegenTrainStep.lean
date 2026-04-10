@@ -1,5 +1,5 @@
-import LeanJax.Types
-import LeanJax.MlirCodegen
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
 
 def mnistMlp : NetSpec where
   name := "MNIST MLP"

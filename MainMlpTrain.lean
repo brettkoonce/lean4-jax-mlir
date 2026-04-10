@@ -1,5 +1,5 @@
-import LeanJax.IreeRuntime
-import LeanJax.MnistData
+import LeanMlir.IreeRuntime
+import LeanMlir.MnistData
 
 /-! MNIST MLP training in Lean, orchestrating an IREE-backed train_step
     kernel. Params live as a single packed FloatArray; each step ships them

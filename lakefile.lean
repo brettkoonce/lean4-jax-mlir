@@ -5,8 +5,8 @@ package «lean4-jax» where
   version := v!"0.1.0"
   buildType := .release
 
-lean_lib «LeanJax» where
-  roots := #[`LeanJax]
+lean_lib «LeanMlir» where
+  roots := #[`LeanMlir]
 
 -- Phase 2: Lean → JAX Python codegen + runner. Lives under jax/.
 lean_lib «Jax» where

@@ -1,8 +1,8 @@
-import LeanJax.IreeRuntime
-import LeanJax.F32Array
-import LeanJax.Types
-import LeanJax.Spec
-import LeanJax.MlirCodegen
+import LeanMlir.IreeRuntime
+import LeanMlir.F32Array
+import LeanMlir.Types
+import LeanMlir.Spec
+import LeanMlir.MlirCodegen
 
 /-! VGG-16-BN on Imagenette — full IREE training pipeline.
     13 conv layers + GAP + dense, all 3x3 convs with BN.

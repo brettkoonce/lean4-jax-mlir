@@ -1,6 +1,6 @@
-import LeanJax.Types
-import LeanJax.MlirCodegen
-import LeanJax.IreeRuntime
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
+import LeanMlir.IreeRuntime
 
 /-! MNIST MLP → MLIR → IREE (CUDA) — Phase 1, step 2+3+FFI of Lean_MLIR.md
 

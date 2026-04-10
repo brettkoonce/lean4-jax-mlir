@@ -1,5 +1,5 @@
-import LeanJax.Types
-import LeanJax.MlirCodegen
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
 
 /-! MNIST CNN → MLIR → .vmfb via Lean-generated StableHLO. Tests that the
     new conv/pool/flatten emission in `MlirCodegen.lean` matches the

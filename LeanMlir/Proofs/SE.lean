@@ -1,5 +1,5 @@
-import LeanJax.Proofs.Tensor
-import LeanJax.Proofs.Residual
+import LeanMlir.Proofs.Tensor
+import LeanMlir.Proofs.Residual
 
 /-!
 # Squeeze-and-Excitation — the "main × gate" pattern

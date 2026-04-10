@@ -1,7 +1,7 @@
-import LeanJax.IreeRuntime
-import LeanJax.F32Array
-import LeanJax.Types
-import LeanJax.MlirCodegen
+import LeanMlir.IreeRuntime
+import LeanMlir.F32Array
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
 
 /-! CIFAR-10 CNN training — f32 ByteArray version.
     Zero f64↔f32 conversion. Data loading in C. -/

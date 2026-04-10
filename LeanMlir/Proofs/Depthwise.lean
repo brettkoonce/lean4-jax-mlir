@@ -1,5 +1,5 @@
-import LeanJax.Proofs.Tensor
-import LeanJax.Proofs.CNN
+import LeanMlir.Proofs.Tensor
+import LeanMlir.Proofs.CNN
 
 /-!
 # Depthwise Convolution

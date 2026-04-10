@@ -1,5 +1,5 @@
-import LeanJax.Proofs.Tensor
-import LeanJax.Proofs.MLP
+import LeanMlir.Proofs.Tensor
+import LeanMlir.Proofs.MLP
 
 /-!
 # CNN VJP Proofs

@@ -1,5 +1,5 @@
-import LeanJax.Types
-import LeanJax.Spec
+import LeanMlir.Types
+import LeanMlir.Spec
 
 set_option maxRecDepth 2000
 

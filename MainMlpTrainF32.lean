@@ -1,7 +1,7 @@
-import LeanJax.IreeRuntime
-import LeanJax.F32Array
-import LeanJax.Types
-import LeanJax.MlirCodegen
+import LeanMlir.IreeRuntime
+import LeanMlir.F32Array
+import LeanMlir.Types
+import LeanMlir.MlirCodegen
 
 /-! MNIST MLP training — f32 ByteArray version.
     Same architecture as MainMlpTrain but with zero f64↔f32 conversion

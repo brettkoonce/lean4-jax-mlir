@@ -1,5 +1,5 @@
-import LeanJax.IreeRuntime
-import LeanJax.MnistData
+import LeanMlir.IreeRuntime
+import LeanMlir.MnistData
 
 /-! MNIST CNN training via hand-written VJPs in IREE. Uses the generic
     trainStepPacked FFI with CnnLayout shape descriptors. -/
