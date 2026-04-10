@@ -414,6 +414,53 @@ private def emitMbConv (startPidx : Nat) (curSSA : String) (curShape : List Nat)
       ssa := s!"%mb_add{startPidx}_{bi}"
   return (code, ssa, shape, p)
 
+/-- Emit a Fused-MBConv (EfficientNet V2) block stage for inference.
+    Unlike regular MBConv, fused-MBConv replaces the 1×1 expand + k×k depthwise pair
+    with a single regular k×k convolution.
+    Structure per block:
+      1. Fused expand: k×k regular convBn (blockIc → mid) + Swish
+      2. Optional SE
+      3. Project: 1×1 convBn (mid → oc), linear (SKIPPED if expand == 1)
+      4. Skip if blockIc == oc && stride == 1
+    Returns (code, newSSA, newShape, newPidx). -/
+private def emitFusedMbConv (startPidx : Nat) (curSSA : String) (curShape : List Nat)
+    (ic oc expand kSize firstStride nBlocks : Nat) (useSE : Bool)
+    (fixedBN : Bool := false) : String × String × List Nat × Nat := Id.run do
+  let mut code := ""
+  let mut ssa := curSSA
+  let mut shape := curShape
+  let mut p := startPidx
+  for bi in [:nBlocks] do
+    let blockIn := ssa
+    let stride := if bi == 0 then firstStride else 1
+    let blockIc := if bi == 0 then ic else oc
+    let mid := if expand == 1 then oc else blockIc * expand
+    let seMid := Nat.max 1 (mid / 4)
+    let useSkip := stride == 1 && blockIc == oc
+    -- 1. Fused expand: regular k×k convBn, Swish activation.
+    let (s1, out1, sh1) := emitConvBn p ssa shape blockIc mid kSize stride false (fixedBN := fixedBN)
+    code := code ++ s1
+    code := code ++ s!"    %fmb_sig{p} = stablehlo.logistic {out1} : {tensorTy sh1}\n"
+    code := code ++ s!"    %fmb_sw{p} = stablehlo.multiply {out1}, %fmb_sig{p} : {tensorTy sh1}\n"
+    ssa := s!"%fmb_sw{p}"; shape := sh1; p := p + 1
+    -- 2. SE block (optional) — same as MBConv (swish reduce, sigmoid gate).
+    if useSE then
+      let tag := s!"_f{startPidx}_{bi}"
+      code := code ++ s!"    %se_zf{tag}_init = stablehlo.constant dense<0.0> : tensor<f32>\n"
+      let (sse, outSE) := emitSEBlock tag ssa shape mid seMid p (p + 1)
+      code := code ++ sse
+      ssa := outSE
+      p := p + 2
+    -- 3. Project: 1×1 convBn, NO activation — only when expand != 1.
+    if expand != 1 then
+      let (s3, out3, sh3) := emitConvBn p ssa shape mid oc 1 1 false (fixedBN := fixedBN)
+      code := code ++ s3; ssa := out3; shape := sh3; p := p + 1
+    -- 4. Skip connection: if stride==1 AND blockIc==oc, add (no post-add activation)
+    if useSkip then
+      code := code ++ s!"    %fmb_add{startPidx}_{bi} = stablehlo.add {ssa}, {blockIn} : {tensorTy shape}\n"
+      ssa := s!"%fmb_add{startPidx}_{bi}"
+  return (code, ssa, shape, p)
+
 /-- Emit h-swish forward: x * ReLU6(x + 3) / 6
     Returns (code, output_ssa). Caller provides input_ssa and shape. -/
 private def emitHSwishForward (tag : String) (inSSA : String) (shape : List Nat)
@@ -997,6 +1044,12 @@ private def emitForwardBody (spec : NetSpec) (batchSize : Nat) (fixedBN : Bool :
       curSSA := newSSA
       curShape := newShape
       pidx := newPidx
+    | .fusedMbConv ic oc expand kSize stride nBlocks useSE =>
+      let (snip, newSSA, newShape, newPidx) := emitFusedMbConv pidx curSSA curShape ic oc expand kSize stride nBlocks useSE (fixedBN := fixedBN)
+      code := code ++ snip
+      curSSA := newSSA
+      curShape := newShape
+      pidx := newPidx
     | .mbConvV3 ic oc expandCh kSize stride useSE useHSwish =>
       let (snip, newSSA, newShape, newPidx) := emitMbConvV3 pidx curSSA curShape ic oc expandCh kSize stride useSE useHSwish (fixedBN := fixedBN)
       code := code ++ snip
@@ -1156,6 +1209,29 @@ private def emitForwardSig (spec : NetSpec) (batchSize : Nat) : String := Id.run
             pidx := pidx + 1
           params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
           pidx := pidx + 1
+        let oH := (h + stride - 1) / stride
+        let oW := (w + stride - 1) / stride
+        curShape := [b, oc, oH, oW]
+      | _ => pure ()
+      outShape := curShape
+    | .fusedMbConv ic oc expand kSize stride nBlocks useSE =>
+      match curShape with
+      | [b, _, h, w] =>
+        for bi in [:nBlocks] do
+          let blockIc := if bi == 0 then ic else oc
+          let mid := if expand == 1 then oc else blockIc * expand
+          let seMid := Nat.max 1 (mid / 4)
+          -- Fused expand: regular k×k conv
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, blockIc, kSize, kSize]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+          pidx := pidx + 1
+          if useSE then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [seMid, mid, 1, 1]}, %b{pidx}: {tensorTy [seMid]}"
+            pidx := pidx + 1
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, seMid, 1, 1]}, %b{pidx}: {tensorTy [mid]}"
+            pidx := pidx + 1
+          if expand != 1 then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+            pidx := pidx + 1
         let oH := (h + stride - 1) / stride
         let oW := (w + stride - 1) / stride
         curShape := [b, oc, oH, oW]
@@ -1329,6 +1405,18 @@ def collectBnLayers (spec : NetSpec) : Array (Nat × Nat) := Id.run do
           pidx := pidx + 2
         result := result.push (pidx, oc)
         pidx := pidx + 1
+    | .fusedMbConv ic oc expand _kSize _ nBlocks useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := if expand == 1 then oc else blockIc * expand
+        -- Fused expand convBn
+        result := result.push (pidx, mid)
+        pidx := pidx + 1
+        if useSE then
+          pidx := pidx + 2
+        if expand != 1 then
+          result := result.push (pidx, oc)
+          pidx := pidx + 1
     | .mbConvV3 ic oc expandCh _kSize _ useSE _ =>
       let mid := expandCh
       if expandCh != ic then
@@ -1452,6 +1540,29 @@ private def emitForwardEvalSig (spec : NetSpec) (batchSize : Nat) : String := Id
             pidx := pidx + 1
           params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
           pidx := pidx + 1
+        let oH := (h + stride - 1) / stride
+        let oW := (w + stride - 1) / stride
+        curShape := [b, oc, oH, oW]
+      | _ => pure ()
+      outShape := curShape
+    | .fusedMbConv ic oc expand kSize stride nBlocks useSE =>
+      match curShape with
+      | [b, _, h, w] =>
+        for bi in [:nBlocks] do
+          let blockIc := if bi == 0 then ic else oc
+          let mid := if expand == 1 then oc else blockIc * expand
+          let seMid := Nat.max 1 (mid / 4)
+          -- Fused expand: regular k×k conv
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, blockIc, kSize, kSize]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+          pidx := pidx + 1
+          if useSE then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [seMid, mid, 1, 1]}, %b{pidx}: {tensorTy [seMid]}"
+            pidx := pidx + 1
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, seMid, 1, 1]}, %b{pidx}: {tensorTy [mid]}"
+            pidx := pidx + 1
+          if expand != 1 then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+            pidx := pidx + 1
         let oH := (h + stride - 1) / stride
         let oW := (w + stride - 1) / stride
         curShape := [b, oc, oH, oW]
@@ -2777,6 +2888,108 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
             addSkipGrad := "identity"
           }
 
+    | .fusedMbConv ic oc expand kSize firstStride nBlocks useSE =>
+      for bi in [:nBlocks] do
+        let blockIn := curSSA
+        let blockInShape := curShape
+        let stride := if bi == 0 then firstStride else 1
+        let blockIc := if bi == 0 then ic else oc
+        let mid := if expand == 1 then oc else blockIc * expand
+        let seMid := Nat.max 1 (mid / 4)
+        let useSkip := stride == 1 && blockIc == oc
+        -- 1. Fused expand: k×k regular convBn, Swish
+        let (s1, rec1) := emitConvBnTrainSwish pidx pos curSSA curShape blockIc mid kSize stride
+        code := code ++ s1; curSSA := rec1.outputSSA; curShape := rec1.outShape
+        records := records.push rec1; pidx := pidx + 1
+        -- 2. SE block (optional): insert between expand and project
+        if useSE then
+          match curShape with
+          | [b, _, h, w] =>
+            let tag := s!"_tf{pidx}_{bi}"
+            let seIn := curSSA
+            let xTy := tensorTy curShape
+            let pRed := pidx
+            let pExp := pidx + 1
+            -- 1. GAP (B, mid, H, W) → (B, mid)
+            code := code ++ s!"    %se_gs{tag} = stablehlo.reduce({seIn} init: %zf) applies stablehlo.add across dimensions = [2, 3]\n"
+            code := code ++ s!"          : ({xTy}, tensor<f32>) -> {tensorTy [b, mid]}\n"
+            code := code ++ s!"    %se_gN{tag} = stablehlo.constant dense<{h * w}.0> : {tensorTy [b, mid]}\n"
+            code := code ++ s!"    %se_g{tag} = stablehlo.divide %se_gs{tag}, %se_gN{tag} : {tensorTy [b, mid]}\n"
+            -- 2. Reduce dense
+            code := code ++ s!"    %se_Wr{tag} = stablehlo.reshape %W{pRed} : ({tensorTy [seMid, mid, 1, 1]}) -> {tensorTy [seMid, mid]}\n"
+            code := code ++ s!"    %se_rm{tag} = stablehlo.dot_general %se_g{tag}, %se_Wr{tag}, contracting_dims = [1] x [1],\n"
+            code := code ++ s!"              precision = [DEFAULT, DEFAULT]\n"
+            code := code ++ s!"            : ({tensorTy [b, mid]}, {tensorTy [seMid, mid]}) -> {tensorTy [b, seMid]}\n"
+            code := code ++ s!"    %se_rbb{tag} = stablehlo.broadcast_in_dim %b{pRed}, dims = [1] : ({tensorTy [seMid]}) -> {tensorTy [b, seMid]}\n"
+            code := code ++ s!"    %se_rb{tag} = stablehlo.add %se_rm{tag}, %se_rbb{tag} : {tensorTy [b, seMid]}\n"
+            -- 3. Swish on reduce output
+            code := code ++ s!"    %se_rsig{tag} = stablehlo.logistic %se_rb{tag} : {tensorTy [b, seMid]}\n"
+            code := code ++ s!"    %se_rsw{tag} = stablehlo.multiply %se_rb{tag}, %se_rsig{tag} : {tensorTy [b, seMid]}\n"
+            -- 4. Expand dense
+            code := code ++ s!"    %se_We{tag} = stablehlo.reshape %W{pExp} : ({tensorTy [mid, seMid, 1, 1]}) -> {tensorTy [mid, seMid]}\n"
+            code := code ++ s!"    %se_em{tag} = stablehlo.dot_general %se_rsw{tag}, %se_We{tag}, contracting_dims = [1] x [1],\n"
+            code := code ++ s!"              precision = [DEFAULT, DEFAULT]\n"
+            code := code ++ s!"            : ({tensorTy [b, seMid]}, {tensorTy [mid, seMid]}) -> {tensorTy [b, mid]}\n"
+            code := code ++ s!"    %se_ebb{tag} = stablehlo.broadcast_in_dim %b{pExp}, dims = [1] : ({tensorTy [mid]}) -> {tensorTy [b, mid]}\n"
+            code := code ++ s!"    %se_eb{tag} = stablehlo.add %se_em{tag}, %se_ebb{tag} : {tensorTy [b, mid]}\n"
+            -- 5. Sigmoid + broadcast multiply
+            code := code ++ s!"    %se_sig{tag} = stablehlo.logistic %se_eb{tag} : {tensorTy [b, mid]}\n"
+            code := code ++ s!"    %se_sigr{tag} = stablehlo.reshape %se_sig{tag} : ({tensorTy [b, mid]}) -> {tensorTy [b, mid, 1, 1]}\n"
+            code := code ++ s!"    %se_sigb{tag} = stablehlo.broadcast_in_dim %se_sigr{tag}, dims = [0, 1, 2, 3] : ({tensorTy [b, mid, 1, 1]}) -> {xTy}\n"
+            code := code ++ s!"    %se_out{tag} = stablehlo.multiply {seIn}, %se_sigb{tag} : {xTy}\n"
+            curSSA := s!"%se_out{tag}"
+            records := records.push {
+              layer := .globalAvgPool
+              pidx := none, pos
+              inputSSA := seIn
+              preActSSA := ""
+              outputSSA := curSSA
+              inShape := curShape
+              outShape := curShape
+              hasRelu := false
+              isSE := true
+              sePidxRed := pRed
+              sePidxExp := pExp
+              seMid := seMid
+              seMidFull := mid
+              seInputSSA := seIn
+              seGapSSA := s!"%se_g{tag}"
+              seRbSSA := s!"%se_rb{tag}"
+              seRswSSA := s!"%se_rsw{tag}"
+              seEbSSA := s!"%se_eb{tag}"
+              seSigSSA := s!"%se_sig{tag}"
+              seOutSSA := curSSA
+            }
+            pidx := pidx + 2
+          | _ => pure ()
+        -- 3. Project: 1×1, NO activation (only if expand != 1)
+        if expand != 1 then
+          let (s3, rec3) := emitConvBnTrain pidx pos curSSA curShape mid oc 1 1 false
+          code := code ++ s3; curSSA := rec3.outputSSA; curShape := rec3.outShape
+          records := records.push rec3; pidx := pidx + 1
+        -- 4. Skip connection: stride==1 AND blockIc==oc, NO post-add activation
+        if useSkip then
+          let addId := s!"fmb{pidx}_{bi}"
+          code := code ++ s!"    %rb_add{addId} = stablehlo.add {curSSA}, {blockIn} : {tensorTy curShape}\n"
+          curSSA := s!"%rb_add{addId}"
+          let skipGradSSA := s!"%rb_dskip{addId}"
+          -- Number of layer records in this block: fused(1) + se?(1) + proj?(1)
+          let nLayersInBlock := 1 + (if useSE then 1 else 0) + (if expand != 1 then 1 else 0)
+          let firstIdx := records.size - nLayersInBlock
+          let firstRec := records[firstIdx]!
+          records := records.set! firstIdx { firstRec with addSkipGrad := skipGradSSA }
+          records := records.push {
+            layer := .globalAvgPool
+            pidx := none, pos
+            inputSSA := blockIn
+            preActSSA := s!"%rb_add{addId}"
+            outputSSA := curSSA
+            inShape := blockInShape
+            outShape := curShape
+            hasRelu := false
+            addSkipGrad := "identity"
+          }
+
     | .mbConvV3 ic oc expandCh kSize stride useSE useHSwish =>
       -- Single block variant of mbConv:
       -- expand (if expandCh != ic) → depthwise → optional SE → project → optional skip
@@ -3955,6 +4168,44 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
       match curShape with
       | [b, _, h, w] => curShape := [b, oc, (h + stride - 1) / stride, (w + stride - 1) / stride]
       | _ => pure ()
+    | .fusedMbConv ic oc expand kSize stride nBlocks useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := if expand == 1 then oc else blockIc * expand
+        let seMid := Nat.max 1 (mid / 4)
+        let gTyM := tensorTy [mid]; let gTyO := tensorTy [oc]
+        -- Fused expand: regular kxk convBn
+        let wTy := tensorTy [mid, blockIc, kSize, kSize]
+        params := params ++ s!"      %W{pidx}: {wTy}, %g{pidx}: {gTyM}, %bt{pidx}: {gTyM},\n"
+        paramRetTypes := paramRetTypes.push wTy |>.push gTyM |>.push gTyM
+        mRetTypes := mRetTypes.push wTy |>.push gTyM |>.push gTyM
+        vRetTypes := vRetTypes.push wTy |>.push gTyM |>.push gTyM
+        pidx := pidx + 1
+        if useSE then
+          let wRedTy := tensorTy [seMid, mid, 1, 1]
+          let bRedTy := tensorTy [seMid]
+          params := params ++ s!"      %W{pidx}: {wRedTy}, %b{pidx}: {bRedTy},\n"
+          paramRetTypes := paramRetTypes.push wRedTy |>.push bRedTy
+          mRetTypes := mRetTypes.push wRedTy |>.push bRedTy
+          vRetTypes := vRetTypes.push wRedTy |>.push bRedTy
+          pidx := pidx + 1
+          let wExpTy := tensorTy [mid, seMid, 1, 1]
+          let bExpTy := tensorTy [mid]
+          params := params ++ s!"      %W{pidx}: {wExpTy}, %b{pidx}: {bExpTy},\n"
+          paramRetTypes := paramRetTypes.push wExpTy |>.push bExpTy
+          mRetTypes := mRetTypes.push wExpTy |>.push bExpTy
+          vRetTypes := vRetTypes.push wExpTy |>.push bExpTy
+          pidx := pidx + 1
+        if expand != 1 then
+          let pjTy := tensorTy [oc, mid, 1, 1]
+          params := params ++ s!"      %W{pidx}: {pjTy}, %g{pidx}: {gTyO}, %bt{pidx}: {gTyO},\n"
+          paramRetTypes := paramRetTypes.push pjTy |>.push gTyO |>.push gTyO
+          mRetTypes := mRetTypes.push pjTy |>.push gTyO |>.push gTyO
+          vRetTypes := vRetTypes.push pjTy |>.push gTyO |>.push gTyO
+          pidx := pidx + 1
+      match curShape with
+      | [b, _, h, w] => curShape := [b, oc, (h + stride - 1) / stride, (w + stride - 1) / stride]
+      | _ => pure ()
     | .mbConvV3 ic oc expandCh kSize stride useSE _useHSwish =>
       let mid := expandCh
       let seMid := Nat.max 1 (mid / 4)
@@ -4158,6 +4409,22 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
           mpidx := mpidx + 1
         params := params ++ s!"      %m_W{mpidx}: {tensorTy [oc, mid, 1, 1]}, %m_g{mpidx}: {gTyO}, %m_bt{mpidx}: {gTyO},\n"
         mpidx := mpidx + 1
+    | .fusedMbConv ic oc expand kSize _ nBlocks useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := if expand == 1 then oc else blockIc * expand
+        let seMid := Nat.max 1 (mid / 4)
+        let gTyM := tensorTy [mid]; let gTyO := tensorTy [oc]
+        params := params ++ s!"      %m_W{mpidx}: {tensorTy [mid, blockIc, kSize, kSize]}, %m_g{mpidx}: {gTyM}, %m_bt{mpidx}: {gTyM},\n"
+        mpidx := mpidx + 1
+        if useSE then
+          params := params ++ s!"      %m_W{mpidx}: {tensorTy [seMid, mid, 1, 1]}, %m_b{mpidx}: {tensorTy [seMid]},\n"
+          mpidx := mpidx + 1
+          params := params ++ s!"      %m_W{mpidx}: {tensorTy [mid, seMid, 1, 1]}, %m_b{mpidx}: {tensorTy [mid]},\n"
+          mpidx := mpidx + 1
+        if expand != 1 then
+          params := params ++ s!"      %m_W{mpidx}: {tensorTy [oc, mid, 1, 1]}, %m_g{mpidx}: {gTyO}, %m_bt{mpidx}: {gTyO},\n"
+          mpidx := mpidx + 1
     | .mbConvV3 ic oc expandCh kSize _ useSE _ =>
       let mid := expandCh
       let seMid := Nat.max 1 (mid / 4)
@@ -4270,6 +4537,22 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
           vpidx2 := vpidx2 + 1
         params := params ++ s!"      %v_W{vpidx2}: {tensorTy [oc, mid, 1, 1]}, %v_g{vpidx2}: {gTyO}, %v_bt{vpidx2}: {gTyO},\n"
         vpidx2 := vpidx2 + 1
+    | .fusedMbConv ic oc expand kSize _ nBlocks useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := if expand == 1 then oc else blockIc * expand
+        let seMid := Nat.max 1 (mid / 4)
+        let gTyM := tensorTy [mid]; let gTyO := tensorTy [oc]
+        params := params ++ s!"      %v_W{vpidx2}: {tensorTy [mid, blockIc, kSize, kSize]}, %v_g{vpidx2}: {gTyM}, %v_bt{vpidx2}: {gTyM},\n"
+        vpidx2 := vpidx2 + 1
+        if useSE then
+          params := params ++ s!"      %v_W{vpidx2}: {tensorTy [seMid, mid, 1, 1]}, %v_b{vpidx2}: {tensorTy [seMid]},\n"
+          vpidx2 := vpidx2 + 1
+          params := params ++ s!"      %v_W{vpidx2}: {tensorTy [mid, seMid, 1, 1]}, %v_b{vpidx2}: {tensorTy [mid]},\n"
+          vpidx2 := vpidx2 + 1
+        if expand != 1 then
+          params := params ++ s!"      %v_W{vpidx2}: {tensorTy [oc, mid, 1, 1]}, %v_g{vpidx2}: {gTyO}, %v_bt{vpidx2}: {gTyO},\n"
+          vpidx2 := vpidx2 + 1
     | .mbConvV3 ic oc expandCh kSize _ useSE _ =>
       let mid := expandCh
       let seMid := Nat.max 1 (mid / 4)

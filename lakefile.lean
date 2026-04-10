@@ -90,6 +90,12 @@ lean_exe «efficientnet-train» where
 lean_exe «efficientnet-b0» where
   root := `MainEfficientNet
 
+lean_exe «efficientnet-v2-train» where
+  root := `MainEfficientNetV2Train
+  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,--allow-shlib-undefined"]
+
 lean_exe «mobilenet-v3» where
   root := `MainMobilenetV3
 
