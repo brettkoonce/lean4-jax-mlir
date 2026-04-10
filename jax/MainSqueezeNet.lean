@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! SqueezeNet v1.1 on Imagenette
     Fire modules: squeeze 1x1 → expand (1x1 || 3x3) → concat

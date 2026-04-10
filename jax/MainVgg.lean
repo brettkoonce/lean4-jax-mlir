@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! VGG-16 (with BN) on Imagenette
     13 conv layers + 3 dense layers, all 3x3 convs.

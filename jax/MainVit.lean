@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! Vision Transformer (ViT-Tiny) on Imagenette
     Patch 16×16 → 192-dim, 12 blocks, 3 heads, MLP 768

@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! CIFAR-10 CNN — S4TF book Ch. 3
     Conv²→Pool→Conv²→Pool→Dense³, 2.43M params -/

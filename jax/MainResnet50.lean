@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! ResNet-50 on Imagenette — Bottleneck blocks
     Conv7/2 → Pool → BN3(64→256) → BN4(256→512) → BN6(512→1024) → BN3(1024→2048) → GAP → 10

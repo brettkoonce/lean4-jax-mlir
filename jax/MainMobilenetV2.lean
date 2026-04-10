@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! MobileNet v2 on Imagenette — Inverted residual blocks
     Conv3/2 → 17 inverted residual blocks → Conv1x1 → GAP → Dense

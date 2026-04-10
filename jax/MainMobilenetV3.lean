@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! MobileNet v3-Large on Imagenette
     Hard-swish, squeeze-excitation with hard-sigmoid, inverted residuals.

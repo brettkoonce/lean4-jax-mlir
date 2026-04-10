@@ -1,6 +1,6 @@
 import LeanJax.Types
 import LeanJax.Spec
-import LeanJax.Codegen
+import Jax.Codegen
 /-! Runner: find Python, generate script, execute training. -/
 
 def findPython : IO String := do

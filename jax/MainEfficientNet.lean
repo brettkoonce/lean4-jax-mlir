@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! EfficientNet-B0 on Imagenette
     MBConv blocks with Swish activation and squeeze-excitation.

@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! MobileNet v1 on Imagenette
     Standard conv → 13 depthwise-separable convs → GAP → Dense

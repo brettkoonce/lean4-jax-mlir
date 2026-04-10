@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! EfficientNet V2-S on Imagenette
     Fused-MBConv in early stages, MBConv in later stages.

@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! ResNet-34 on Imagenette — S4TF book Ch. 4
     Conv7/2 → Pool → Res3(64) → Res4(128) → Res6(256) → Res3(512) → GAP → 10

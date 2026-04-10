@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! MNIST MLP — S4TF book Ch. 1
     784 → 512 (ReLU) → 512 (ReLU) → 10 -/

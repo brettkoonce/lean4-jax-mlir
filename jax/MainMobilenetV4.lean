@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! MobileNet V4-Medium on Imagenette
     Universal Inverted Bottleneck blocks with varied DW configurations.

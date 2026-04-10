@@ -1,4 +1,4 @@
-import LeanJax
+import Jax
 
 /-! MNIST CNN — S4TF book Ch. 2
     Conv(1→32,3×3) → Conv(32→32,3×3) → Pool → 6272→512→512→10 -/
