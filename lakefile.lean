@@ -81,6 +81,12 @@ lean_exe «mobilenet-v2-train» where
     "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
     "-Wl,--allow-shlib-undefined"]
 
+lean_exe «efficientnet-train» where
+  root := `MainEfficientNetTrain
+  moreLinkArgs := #["-L", "/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-liree_ffi", "-Wl,-rpath,/home/skoonce/lean/claude_max/lean4-jax/ffi",
+    "-Wl,--allow-shlib-undefined"]
+
 lean_exe «efficientnet-b0» where
   root := `MainEfficientNet
 

@@ -20,6 +20,7 @@ private def inputFlatDim (spec : NetSpec) : Nat :=
   | some (.conv2d ic _ _ _ _) => ic * spec.imageH * spec.imageW
   | some (.convBn ic _ _ _ _) => ic * spec.imageH * spec.imageW
   | some (.invertedResidual ic _ _ _ _) => ic * spec.imageH * spec.imageW
+  | some (.mbConv ic _ _ _ _ _ _) => ic * spec.imageH * spec.imageW
   | _ => spec.imageH * spec.imageW
 
 /-- If the first layer is conv/convBn, returns the NCHW input channels. -/
@@ -28,6 +29,7 @@ private def inputChannels (spec : NetSpec) : Option Nat :=
   | some (.conv2d ic _ _ _ _) => some ic
   | some (.convBn ic _ _ _ _) => some ic
   | some (.invertedResidual ic _ _ _ _) => some ic
+  | some (.mbConv ic _ _ _ _ _ _) => some ic
   | _ => none
 
 /-- Render tensor type: `tensor<128x1x28x28xf32>`. -/
@@ -203,11 +205,13 @@ private def emitConvBn (pidx : Nat) (curSSA : String) (curShape : List Nat)
       return (s, preSSA, newShape)
   | _ => return ("    // convBn error\n", curSSA, curShape)
 
-/-- Emit depthwise convBn: depthwise 3×3 conv + BN + ReLU6.
+/-- Emit depthwise convBn: depthwise conv + BN + optional ReLU6.
     Weight shape: (channels, 1, kSize, kSize), feature_group_count = channels.
-    Output channels = input channels. -/
+    Output channels = input channels.
+    If `noAct := true`, emits only convBn (no activation), returning pre-activation
+    so the caller can attach its own (e.g., Swish for MBConv). -/
 private def emitDepthwiseConvBn (pidx : Nat) (curSSA : String) (curShape : List Nat)
-    (channels kSize stride : Nat) (fixedBN : Bool := false)
+    (channels kSize stride : Nat) (fixedBN : Bool := false) (noAct : Bool := false)
     : String × String × List Nat := Id.run do
   match curShape with
   | [b, _, h, w] =>
@@ -258,6 +262,8 @@ private def emitDepthwiseConvBn (pidx : Nat) (curSSA : String) (curShape : List 
     s := s ++ s!"    %cbn_bt_bc{pidx} = stablehlo.broadcast_in_dim %bt{pidx}, dims = [1] : ({tensorTy [channels]}) -> {tensorTy newShape}\n"
     let preSSA := s!"%cbn_pre{pidx}"
     s := s ++ s!"    {preSSA} = stablehlo.add %cbn_gn{pidx}, %cbn_bt_bc{pidx} : {tensorTy newShape}\n"
+    if noAct then
+      return (s, preSSA, newShape)
     -- ReLU6
     s := s ++ s!"    %cbn_z{pidx} = stablehlo.constant dense<0.0> : {tensorTy newShape}\n"
     s := s ++ s!"    %cbn_r{pidx} = stablehlo.maximum {preSSA}, %cbn_z{pidx} : {tensorTy newShape}\n"
@@ -301,6 +307,52 @@ private def emitInvertedResidual (startPidx : Nat) (curSSA : String) (curShape :
     if useSkip then
       code := code ++ s!"    %ir_add{startPidx}_{bi} = stablehlo.add {ssa}, {blockIn} : {tensorTy shape}\n"
       ssa := s!"%ir_add{startPidx}_{bi}"
+  return (code, ssa, shape, p)
+
+/-- Emit an MBConv (EfficientNet) block stage for inference.
+    Same structure as InvertedResidual but:
+      - uses the layer's `kSize` (not hardcoded 3)
+      - uses Swish activation (x * sigmoid(x)) instead of ReLU6
+      - squeeze-and-excitation is NOT implemented yet (skipped, with warning).
+    Returns (code, newSSA, newShape, newPidx). -/
+private def emitMbConv (startPidx : Nat) (curSSA : String) (curShape : List Nat)
+    (ic oc expand kSize firstStride nBlocks : Nat) (useSE : Bool)
+    (fixedBN : Bool := false) : String × String × List Nat × Nat := Id.run do
+  let mut code := ""
+  if useSE then
+    code := code ++ "    // WARNING: MBConv useSE=true requested but SE is not implemented (phase 2); emitting without SE.\n"
+  let mut ssa := curSSA
+  let mut shape := curShape
+  let mut p := startPidx
+  for bi in [:nBlocks] do
+    let blockIn := ssa
+    let stride := if bi == 0 then firstStride else 1
+    let blockIc := if bi == 0 then ic else oc
+    let mid := blockIc * expand
+    let useSkip := stride == 1 && blockIc == oc
+    -- 1. Expand: 1×1 convBn + Swish (skip if expand == 1)
+    if expand != 1 then
+      let (s1, out1, sh1) := emitConvBn p ssa shape blockIc mid 1 1 false (fixedBN := fixedBN)
+      code := code ++ s1
+      -- Manual Swish (logistic * input) after convBn
+      code := code ++ s!"    %mb_sig{p} = stablehlo.logistic {out1} : {tensorTy sh1}\n"
+      code := code ++ s!"    %mb_sw{p} = stablehlo.multiply {out1}, %mb_sig{p} : {tensorTy sh1}\n"
+      ssa := s!"%mb_sw{p}"; shape := sh1; p := p + 1
+    -- 2. Depthwise: k×k depthwise convBn + Swish
+    let (s2, out2, sh2) := emitDepthwiseConvBn p ssa shape mid kSize stride
+                             (fixedBN := fixedBN) (noAct := true)
+    code := code ++ s2
+    code := code ++ s!"    %mb_dw_sig{p} = stablehlo.logistic {out2} : {tensorTy sh2}\n"
+    code := code ++ s!"    %mb_dw_sw{p} = stablehlo.multiply {out2}, %mb_dw_sig{p} : {tensorTy sh2}\n"
+    ssa := s!"%mb_dw_sw{p}"; shape := sh2; p := p + 1
+    -- 3. (SE block would go here — phase 2)
+    -- 4. Project: 1×1 convBn, NO activation
+    let (s3, out3, sh3) := emitConvBn p ssa shape mid oc 1 1 false (fixedBN := fixedBN)
+    code := code ++ s3; ssa := out3; shape := sh3; p := p + 1
+    -- 5. Skip connection: if stride==1 AND blockIc==oc, add (no post-add activation)
+    if useSkip then
+      code := code ++ s!"    %mb_add{startPidx}_{bi} = stablehlo.add {ssa}, {blockIn} : {tensorTy shape}\n"
+      ssa := s!"%mb_add{startPidx}_{bi}"
   return (code, ssa, shape, p)
 
 /-- Emit global average pool: (b, c, h, w) -> (b, c). -/
@@ -518,6 +570,12 @@ private def emitForwardBody (spec : NetSpec) (batchSize : Nat) (fixedBN : Bool :
       curSSA := newSSA
       curShape := newShape
       pidx := newPidx
+    | .mbConv ic oc expand kSize stride nBlocks useSE =>
+      let (snip, newSSA, newShape, newPidx) := emitMbConv pidx curSSA curShape ic oc expand kSize stride nBlocks useSE (fixedBN := fixedBN)
+      code := code ++ snip
+      curSSA := newSSA
+      curShape := newShape
+      pidx := newPidx
     | _ =>
       code := code ++ "    // UNSUPPORTED LAYER\n"
     pos := pos + 1
@@ -616,6 +674,24 @@ private def emitForwardSig (spec : NetSpec) (batchSize : Nat) : String := Id.run
         curShape := [b, oc, oH, oW]
       | _ => pure ()
       outShape := curShape
+    | .mbConv ic oc expand kSize stride nBlocks _useSE =>
+      match curShape with
+      | [b, _, h, w] =>
+        for bi in [:nBlocks] do
+          let blockIc := if bi == 0 then ic else oc
+          let mid := blockIc * expand
+          if expand != 1 then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, blockIc, 1, 1]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+            pidx := pidx + 1
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, 1, kSize, kSize]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+          pidx := pidx + 1
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+          pidx := pidx + 1
+        let oH := (h + stride - 1) / stride
+        let oW := (w + stride - 1) / stride
+        curShape := [b, oc, oH, oW]
+      | _ => pure ()
+      outShape := curShape
     | .maxPool size stride =>
       match curShape with
       | [b, c, h, w] =>
@@ -700,6 +776,17 @@ def collectBnLayers (spec : NetSpec) : Array (Nat × Nat) := Id.run do
         result := result.push (pidx, mid)
         pidx := pidx + 1
         -- Project 1×1
+        result := result.push (pidx, oc)
+        pidx := pidx + 1
+    | .mbConv ic oc expand _kSize _ nBlocks _useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := blockIc * expand
+        if expand != 1 then
+          result := result.push (pidx, mid)
+          pidx := pidx + 1
+        result := result.push (pidx, mid)
+        pidx := pidx + 1
         result := result.push (pidx, oc)
         pidx := pidx + 1
     | _ => pure ()
@@ -795,6 +882,24 @@ private def emitForwardEvalSig (spec : NetSpec) (batchSize : Nat) : String := Id
         curShape := [b, oc, oH, oW]
       | _ => pure ()
       outShape := curShape
+    | .mbConv ic oc expand kSize stride nBlocks _useSE =>
+      match curShape with
+      | [b, _, h, w] =>
+        for bi in [:nBlocks] do
+          let blockIc := if bi == 0 then ic else oc
+          let mid := blockIc * expand
+          if expand != 1 then
+            params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, blockIc, 1, 1]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+            pidx := pidx + 1
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [mid, 1, kSize, kSize]}, %g{pidx}: {tensorTy [mid]}, %bt{pidx}: {tensorTy [mid]}"
+          pidx := pidx + 1
+          params := params ++ s!",\n    %W{pidx}: {tensorTy [oc, mid, 1, 1]}, %g{pidx}: {tensorTy [oc]}, %bt{pidx}: {tensorTy [oc]}"
+          pidx := pidx + 1
+        let oH := (h + stride - 1) / stride
+        let oW := (w + stride - 1) / stride
+        curShape := [b, oc, oH, oW]
+      | _ => pure ()
+      outShape := curShape
     | .maxPool _ stride =>
       match curShape with
       | [b, c, h, w] =>
@@ -851,6 +956,7 @@ private structure FwdRec where
   istdBcSSA  : String := ""   -- broadcast istd (B, OC, oH, oW)
   hasRelu    : Bool := true
   hasRelu6   : Bool := false  -- ReLU6 activation (MobileNet)
+  hasSwish   : Bool := false  -- Swish activation (x * sigmoid(x)) (EfficientNet)
   isDepthwise : Bool := false -- depthwise conv (feature_group_count = channels)
   ic         : Nat := 0      -- input channels (for backward kernel shapes)
   kSize      : Nat := 3      -- kernel size
@@ -931,9 +1037,9 @@ private def emitConvBnTrain (pidx pos : Nat) (curSSA : String) (curShape : List 
 
 /-- Emit depthwise convBn forward for train step. Records intermediates for backward.
     Weight shape: (channels, 1, kSize, kSize), feature_group_count = channels.
-    Activation: ReLU6. -/
+    Activation: ReLU6 by default, or Swish if `useSwish := true`. -/
 private def emitDepthwiseConvBnTrain (pidx pos : Nat) (curSSA : String) (curShape : List Nat)
-    (channels kSize stride : Nat) : String × FwdRec := Id.run do
+    (channels kSize stride : Nat) (useSwish : Bool := false) : String × FwdRec := Id.run do
   match curShape with
   | [b, _, h, w] =>
     let oH := (h + stride - 1) / stride
@@ -978,11 +1084,16 @@ private def emitDepthwiseConvBnTrain (pidx pos : Nat) (curSSA : String) (curShap
     s := s ++ s!"    %cbn_bt_bc{pidx} = stablehlo.broadcast_in_dim %bt{pidx}, dims = [1] : ({tensorTy [channels]}) -> {tensorTy outShape}\n"
     let preSSA := s!"%cbn_pre{pidx}"
     s := s ++ s!"    {preSSA} = stablehlo.add %cbn_gn{pidx}, %cbn_bt_bc{pidx} : {tensorTy outShape}\n"
-    -- ReLU6
-    s := s ++ s!"    %cbn_z{pidx} = stablehlo.constant dense<0.0> : {tensorTy outShape}\n"
-    s := s ++ s!"    %cbn_r6r{pidx} = stablehlo.maximum {preSSA}, %cbn_z{pidx} : {tensorTy outShape}\n"
-    s := s ++ s!"    %cbn_r6s{pidx} = stablehlo.constant dense<6.0> : {tensorTy outShape}\n"
-    s := s ++ s!"    %cbn_out{pidx} = stablehlo.minimum %cbn_r6r{pidx}, %cbn_r6s{pidx} : {tensorTy outShape}\n"
+    if useSwish then
+      -- Swish: x * sigmoid(x)
+      s := s ++ s!"    %cbn_sig{pidx} = stablehlo.logistic {preSSA} : {tensorTy outShape}\n"
+      s := s ++ s!"    %cbn_out{pidx} = stablehlo.multiply {preSSA}, %cbn_sig{pidx} : {tensorTy outShape}\n"
+    else
+      -- ReLU6
+      s := s ++ s!"    %cbn_z{pidx} = stablehlo.constant dense<0.0> : {tensorTy outShape}\n"
+      s := s ++ s!"    %cbn_r6r{pidx} = stablehlo.maximum {preSSA}, %cbn_z{pidx} : {tensorTy outShape}\n"
+      s := s ++ s!"    %cbn_r6s{pidx} = stablehlo.constant dense<6.0> : {tensorTy outShape}\n"
+      s := s ++ s!"    %cbn_out{pidx} = stablehlo.minimum %cbn_r6r{pidx}, %cbn_r6s{pidx} : {tensorTy outShape}\n"
     let fwdRec : FwdRec := {
       layer := .convBn channels channels kSize stride .same
       pidx := some pidx, pos
@@ -992,7 +1103,10 @@ private def emitDepthwiseConvBnTrain (pidx pos : Nat) (curSSA : String) (curShap
       normSSA := s!"%cbn_norm{pidx}"
       meanBcSSA := s!"%cbn_mean_bc{pidx}"
       istdBcSSA := s!"%cbn_istd_bc{pidx}"
-      hasRelu := false, hasRelu6 := true, isDepthwise := true
+      hasRelu := false
+      hasRelu6 := !useSwish
+      hasSwish := useSwish
+      isDepthwise := true
       ic := channels, kSize := kSize, stride := stride
     }
     return (s, fwdRec)
@@ -1066,6 +1180,72 @@ private def emitConvBnTrainRelu6 (pidx pos : Nat) (curSSA : String) (curShape : 
     return (s, fwdRec)
   | _ => return ("    // convBnRelu6 error\n", default)
 
+/-- Emit convBn forward for train step with Swish (x * sigmoid(x)) activation.
+    Used by EfficientNet's MBConv. -/
+private def emitConvBnTrainSwish (pidx pos : Nat) (curSSA : String) (curShape : List Nat)
+    (ic oc kSize stride : Nat) : String × FwdRec := Id.run do
+  match curShape with
+  | [b, _, h, w] =>
+    let oH := (h + stride - 1) / stride
+    let oW := (w + stride - 1) / stride
+    let outShape := [b, oc, oH, oW]
+    let (pH0, pH1, pW0, pW1) := samePad h w kSize stride
+    let mut s := ""
+    -- Conv
+    s := s ++ s!"    %cbn{pidx} = \"stablehlo.convolution\"({curSSA}, %W{pidx}) " ++ "{\n"
+    s := s ++ "        batch_group_count = 1 : i64,\n"
+    s := s ++ convDimNumbers
+    s := s ++ "        feature_group_count = 1 : i64,\n"
+    s := s ++ s!"        padding = dense<[[{pH0}, {pH1}], [{pW0}, {pW1}]]> : tensor<2x2xi64>,\n"
+    s := s ++ "        rhs_dilation = array<i64: 1, 1>,\n"
+    s := s ++ s!"        window_strides = array<i64: {stride}, {stride}>\n"
+    s := s ++ s!"      " ++ "}" ++ s!" : ({tensorTy curShape}, {tensorTy [oc, ic, kSize, kSize]}) -> {tensorTy outShape}\n"
+    -- Batch norm
+    let bnN := b * oH * oW
+    s := s ++ s!"    %cbn_zf{pidx} = stablehlo.constant dense<0.0> : tensor<f32>\n"
+    s := s ++ s!"    %cbn_ssp{pidx} = stablehlo.reduce(%cbn{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [2, 3]\n"
+    s := s ++ s!"          : ({tensorTy outShape}, tensor<f32>) -> {tensorTy [b, oc]}\n"
+    s := s ++ s!"    %cbn_sum{pidx} = stablehlo.reduce(%cbn_ssp{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [0]\n"
+    s := s ++ s!"          : ({tensorTy [b, oc]}, tensor<f32>) -> {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_N{pidx} = stablehlo.constant dense<{bnN}.0> : {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_mean{pidx} = stablehlo.divide %cbn_sum{pidx}, %cbn_N{pidx} : {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_mean_bc{pidx} = stablehlo.broadcast_in_dim %cbn_mean{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_diff{pidx} = stablehlo.subtract %cbn{pidx}, %cbn_mean_bc{pidx} : {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_sq{pidx} = stablehlo.multiply %cbn_diff{pidx}, %cbn_diff{pidx} : {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_vssp{pidx} = stablehlo.reduce(%cbn_sq{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [2, 3]\n"
+    s := s ++ s!"          : ({tensorTy outShape}, tensor<f32>) -> {tensorTy [b, oc]}\n"
+    s := s ++ s!"    %cbn_vsum{pidx} = stablehlo.reduce(%cbn_vssp{pidx} init: %cbn_zf{pidx}) applies stablehlo.add across dimensions = [0]\n"
+    s := s ++ s!"          : ({tensorTy [b, oc]}, tensor<f32>) -> {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_var{pidx} = stablehlo.divide %cbn_vsum{pidx}, %cbn_N{pidx} : {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_eps{pidx} = stablehlo.constant dense<1.0e-5> : {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_ve{pidx} = stablehlo.add %cbn_var{pidx}, %cbn_eps{pidx} : {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_istd{pidx} = stablehlo.rsqrt %cbn_ve{pidx} : {tensorTy [oc]}\n"
+    s := s ++ s!"    %cbn_istd_bc{pidx} = stablehlo.broadcast_in_dim %cbn_istd{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_norm{pidx} = stablehlo.multiply %cbn_diff{pidx}, %cbn_istd_bc{pidx} : {tensorTy outShape}\n"
+    -- Affine
+    s := s ++ s!"    %cbn_g_bc{pidx} = stablehlo.broadcast_in_dim %g{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_gn{pidx} = stablehlo.multiply %cbn_norm{pidx}, %cbn_g_bc{pidx} : {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_bt_bc{pidx} = stablehlo.broadcast_in_dim %bt{pidx}, dims = [1] : ({tensorTy [oc]}) -> {tensorTy outShape}\n"
+    let preSSA := s!"%cbn_pre{pidx}"
+    s := s ++ s!"    {preSSA} = stablehlo.add %cbn_gn{pidx}, %cbn_bt_bc{pidx} : {tensorTy outShape}\n"
+    -- Swish: x * sigmoid(x)
+    s := s ++ s!"    %cbn_sig{pidx} = stablehlo.logistic {preSSA} : {tensorTy outShape}\n"
+    s := s ++ s!"    %cbn_out{pidx} = stablehlo.multiply {preSSA}, %cbn_sig{pidx} : {tensorTy outShape}\n"
+    let fwdRec : FwdRec := {
+      layer := .convBn ic oc kSize stride .same
+      pidx := some pidx, pos
+      inputSSA := curSSA, preActSSA := preSSA, outputSSA := s!"%cbn_out{pidx}"
+      inShape := curShape, outShape
+      convOutSSA := s!"%cbn{pidx}"
+      normSSA := s!"%cbn_norm{pidx}"
+      meanBcSSA := s!"%cbn_mean_bc{pidx}"
+      istdBcSSA := s!"%cbn_istd_bc{pidx}"
+      hasRelu := false, hasRelu6 := false, hasSwish := true, isDepthwise := false
+      ic := ic, kSize := kSize, stride := stride
+    }
+    return (s, fwdRec)
+  | _ => return ("    // convBnSwish error\n", default)
+
 /-- Emit convBn backward: inst norm VJP + conv backward.
     Returns (code, gradient SSA name, gradient shape). -/
 private def emitConvBnBackward (r : FwdRec) (gradSSA : String) : String × String × String := Id.run do
@@ -1077,9 +1257,10 @@ private def emitConvBnBackward (r : FwdRec) (gradSSA : String) : String × Strin
   let outTy := tensorTy r.outShape
   let spatialN := oH * oW
   let mut s := ""
-  -- ReLU / ReLU6 backward
+  -- ReLU / ReLU6 / Swish backward
   let effGrad := if r.hasRelu then s!"%cbg_relu{p}"
                  else if r.hasRelu6 then s!"%cbg_relu6{p}"
+                 else if r.hasSwish then s!"%cbg_swish{p}"
                  else gradSSA
   if r.hasRelu then
     let i1Ty := outTy.replace "xf32>" "xi1>"
@@ -1091,6 +1272,16 @@ private def emitConvBnBackward (r : FwdRec) (gradSSA : String) : String × Strin
     s := s ++ s!"    %cbg_lt6{p} = stablehlo.compare LT, {r.preActSSA}, %cbn_r6s{p} : ({outTy}, {outTy}) -> {i1Ty}\n"
     s := s ++ s!"    %cbg_mask{p} = stablehlo.and %cbg_gt0{p}, %cbg_lt6{p} : {i1Ty}\n"
     s := s ++ s!"    {effGrad} = stablehlo.select %cbg_mask{p}, {gradSSA}, %cbn_z{p} : {i1Ty}, {outTy}\n"
+  else if r.hasSwish then
+    -- Swish backward: d/dx[x*σ(x)] = σ(x) + x*σ(x)*(1-σ(x)) = σ(x)*(1 + x*(1-σ(x)))
+    -- Recompute sigmoid from pre-activation.
+    s := s ++ s!"    %cbg_sig{p} = stablehlo.logistic {r.preActSSA} : {outTy}\n"
+    s := s ++ s!"    %cbg_one{p} = stablehlo.constant dense<1.0> : {outTy}\n"
+    s := s ++ s!"    %cbg_1ms{p} = stablehlo.subtract %cbg_one{p}, %cbg_sig{p} : {outTy}\n"
+    s := s ++ s!"    %cbg_xt{p} = stablehlo.multiply {r.preActSSA}, %cbg_1ms{p} : {outTy}\n"
+    s := s ++ s!"    %cbg_1px{p} = stablehlo.add %cbg_one{p}, %cbg_xt{p} : {outTy}\n"
+    s := s ++ s!"    %cbg_dsw{p} = stablehlo.multiply %cbg_sig{p}, %cbg_1px{p} : {outTy}\n"
+    s := s ++ s!"    {effGrad} = stablehlo.multiply {gradSSA}, %cbg_dsw{p} : {outTy}\n"
   -- d_gamma = reduce_sum(grad * norm, dims=[0,2,3])
   s := s ++ s!"    %cbg_gn{p} = stablehlo.multiply {effGrad}, {r.normSSA} : {outTy}\n"
   s := s ++ s!"    %d_g{p} = stablehlo.reduce(%cbg_gn{p} init: %zf) applies stablehlo.add across dimensions = [0, 2, 3]\n"
@@ -1197,14 +1388,25 @@ private def emitDepthwiseConvBnBackward (r : FwdRec) (gradSSA : String) : String
   let oW := r.outShape[3]!
   let outTy := tensorTy r.outShape
   let mut s := ""
-  -- ReLU6 backward: mask = (pre > 0) AND (pre < 6), effGrad = select(mask, grad, zero)
-  let effGrad := if r.hasRelu6 then s!"%cbg_relu6{p}" else gradSSA
+  -- ReLU6 / Swish backward
+  let effGrad := if r.hasRelu6 then s!"%cbg_relu6{p}"
+                 else if r.hasSwish then s!"%cbg_swish{p}"
+                 else gradSSA
   if r.hasRelu6 then
     let i1Ty := outTy.replace "xf32>" "xi1>"
     s := s ++ s!"    %cbg_gt0{p} = stablehlo.compare GT, {r.preActSSA}, %cbn_z{p} : ({outTy}, {outTy}) -> {i1Ty}\n"
     s := s ++ s!"    %cbg_lt6{p} = stablehlo.compare LT, {r.preActSSA}, %cbn_r6s{p} : ({outTy}, {outTy}) -> {i1Ty}\n"
     s := s ++ s!"    %cbg_mask{p} = stablehlo.and %cbg_gt0{p}, %cbg_lt6{p} : {i1Ty}\n"
     s := s ++ s!"    {effGrad} = stablehlo.select %cbg_mask{p}, {gradSSA}, %cbn_z{p} : {i1Ty}, {outTy}\n"
+  else if r.hasSwish then
+    -- Swish backward: see emitConvBnBackward comment.
+    s := s ++ s!"    %cbg_sig{p} = stablehlo.logistic {r.preActSSA} : {outTy}\n"
+    s := s ++ s!"    %cbg_one{p} = stablehlo.constant dense<1.0> : {outTy}\n"
+    s := s ++ s!"    %cbg_1ms{p} = stablehlo.subtract %cbg_one{p}, %cbg_sig{p} : {outTy}\n"
+    s := s ++ s!"    %cbg_xt{p} = stablehlo.multiply {r.preActSSA}, %cbg_1ms{p} : {outTy}\n"
+    s := s ++ s!"    %cbg_1px{p} = stablehlo.add %cbg_one{p}, %cbg_xt{p} : {outTy}\n"
+    s := s ++ s!"    %cbg_dsw{p} = stablehlo.multiply %cbg_sig{p}, %cbg_1px{p} : {outTy}\n"
+    s := s ++ s!"    {effGrad} = stablehlo.multiply {gradSSA}, %cbg_dsw{p} : {outTy}\n"
   -- d_gamma, d_beta (same as regular convBn)
   s := s ++ s!"    %cbg_gn{p} = stablehlo.multiply {effGrad}, {r.normSSA} : {outTy}\n"
   s := s ++ s!"    %d_g{p} = stablehlo.reduce(%cbg_gn{p} init: %zf) applies stablehlo.add across dimensions = [0, 2, 3]\n"
@@ -1662,6 +1864,52 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
             addSkipGrad := "identity"
           }
 
+    | .mbConv ic oc expand kSize firstStride nBlocks useSE =>
+      if useSE then
+        code := code ++ "    // WARNING: MBConv useSE=true requested but SE is not implemented (phase 2); training without SE.\n"
+      for bi in [:nBlocks] do
+        let blockIn := curSSA
+        let blockInShape := curShape
+        let stride := if bi == 0 then firstStride else 1
+        let blockIc := if bi == 0 then ic else oc
+        let mid := blockIc * expand
+        let useSkip := stride == 1 && blockIc == oc
+        -- Expand: 1×1, Swish (skip if expand==1)
+        if expand != 1 then
+          let (s1, rec1) := emitConvBnTrainSwish pidx pos curSSA curShape blockIc mid 1 1
+          code := code ++ s1; curSSA := rec1.outputSSA; curShape := rec1.outShape
+          records := records.push rec1; pidx := pidx + 1
+        -- Depthwise: k×k, Swish
+        let (s2, rec2) := emitDepthwiseConvBnTrain pidx pos curSSA curShape mid kSize stride
+                            (useSwish := true)
+        code := code ++ s2; curSSA := rec2.outputSSA; curShape := rec2.outShape
+        records := records.push rec2; pidx := pidx + 1
+        -- Project: 1×1, NO activation
+        let (s3, rec3) := emitConvBnTrain pidx pos curSSA curShape mid oc 1 1 false
+        code := code ++ s3; curSSA := rec3.outputSSA; curShape := rec3.outShape
+        records := records.push rec3; pidx := pidx + 1
+        -- Skip connection: stride==1 AND blockIc==oc, NO post-add activation
+        if useSkip then
+          let addId := s!"mb{pidx}_{bi}"
+          code := code ++ s!"    %rb_add{addId} = stablehlo.add {curSSA}, {blockIn} : {tensorTy curShape}\n"
+          curSSA := s!"%rb_add{addId}"
+          let skipGradSSA := s!"%rb_dskip{addId}"
+          let nLayersInBlock := if expand != 1 then 3 else 2
+          let firstIdx := records.size - nLayersInBlock
+          let firstRec := records[firstIdx]!
+          records := records.set! firstIdx { firstRec with addSkipGrad := skipGradSSA }
+          records := records.push {
+            layer := .globalAvgPool
+            pidx := none, pos
+            inputSSA := blockIn
+            preActSSA := s!"%rb_add{addId}"
+            outputSSA := curSSA
+            inShape := blockInShape
+            outShape := curShape
+            hasRelu := false
+            addSkipGrad := "identity"
+          }
+
     | _ => code := code ++ "    // UNSUPPORTED\n"
     pos := pos + 1
 
@@ -2087,6 +2335,33 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
       match curShape with
       | [b, _, h, w] => curShape := [b, oc, (h + stride - 1) / stride, (w + stride - 1) / stride]
       | _ => pure ()
+    | .mbConv ic oc expand kSize stride nBlocks _useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := blockIc * expand
+        let gTyM := tensorTy [mid]; let gTyO := tensorTy [oc]
+        if expand != 1 then
+          let wTy := tensorTy [mid, blockIc, 1, 1]
+          params := params ++ s!"      %W{pidx}: {wTy}, %g{pidx}: {gTyM}, %bt{pidx}: {gTyM},\n"
+          paramRetTypes := paramRetTypes.push wTy |>.push gTyM |>.push gTyM
+          mRetTypes := mRetTypes.push wTy |>.push gTyM |>.push gTyM
+          vRetTypes := vRetTypes.push wTy |>.push gTyM |>.push gTyM
+          pidx := pidx + 1
+        let dwTy := tensorTy [mid, 1, kSize, kSize]
+        params := params ++ s!"      %W{pidx}: {dwTy}, %g{pidx}: {gTyM}, %bt{pidx}: {gTyM},\n"
+        paramRetTypes := paramRetTypes.push dwTy |>.push gTyM |>.push gTyM
+        mRetTypes := mRetTypes.push dwTy |>.push gTyM |>.push gTyM
+        vRetTypes := vRetTypes.push dwTy |>.push gTyM |>.push gTyM
+        pidx := pidx + 1
+        let pjTy := tensorTy [oc, mid, 1, 1]
+        params := params ++ s!"      %W{pidx}: {pjTy}, %g{pidx}: {gTyO}, %bt{pidx}: {gTyO},\n"
+        paramRetTypes := paramRetTypes.push pjTy |>.push gTyO |>.push gTyO
+        mRetTypes := mRetTypes.push pjTy |>.push gTyO |>.push gTyO
+        vRetTypes := vRetTypes.push pjTy |>.push gTyO |>.push gTyO
+        pidx := pidx + 1
+      match curShape with
+      | [b, _, h, w] => curShape := [b, oc, (h + stride - 1) / stride, (w + stride - 1) / stride]
+      | _ => pure ()
     | .maxPool _size stride =>
       match curShape with
       | [b, c, h, w] => curShape := [b, c, (h + stride - 1) / stride, (w + stride - 1) / stride]
@@ -2146,6 +2421,18 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
         mpidx := mpidx + 1
         params := params ++ s!"      %m_W{mpidx}: {tensorTy [oc, mid, 1, 1]}, %m_g{mpidx}: {gTyO}, %m_bt{mpidx}: {gTyO},\n"
         mpidx := mpidx + 1
+    | .mbConv ic oc expand kSize _ nBlocks _useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := blockIc * expand
+        let gTyM := tensorTy [mid]; let gTyO := tensorTy [oc]
+        if expand != 1 then
+          params := params ++ s!"      %m_W{mpidx}: {tensorTy [mid, blockIc, 1, 1]}, %m_g{mpidx}: {gTyM}, %m_bt{mpidx}: {gTyM},\n"
+          mpidx := mpidx + 1
+        params := params ++ s!"      %m_W{mpidx}: {tensorTy [mid, 1, kSize, kSize]}, %m_g{mpidx}: {gTyM}, %m_bt{mpidx}: {gTyM},\n"
+        mpidx := mpidx + 1
+        params := params ++ s!"      %m_W{mpidx}: {tensorTy [oc, mid, 1, 1]}, %m_g{mpidx}: {gTyO}, %m_bt{mpidx}: {gTyO},\n"
+        mpidx := mpidx + 1
     | _ => pure ()
   -- v_ params (2nd moment, same shapes)
   let mut vpidx2 : Nat := 0
@@ -2189,6 +2476,18 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
           params := params ++ s!"      %v_W{vpidx2}: {tensorTy [mid, blockIc, 1, 1]}, %v_g{vpidx2}: {gTyM}, %v_bt{vpidx2}: {gTyM},\n"
           vpidx2 := vpidx2 + 1
         params := params ++ s!"      %v_W{vpidx2}: {tensorTy [mid, 1, 3, 3]}, %v_g{vpidx2}: {gTyM}, %v_bt{vpidx2}: {gTyM},\n"
+        vpidx2 := vpidx2 + 1
+        params := params ++ s!"      %v_W{vpidx2}: {tensorTy [oc, mid, 1, 1]}, %v_g{vpidx2}: {gTyO}, %v_bt{vpidx2}: {gTyO},\n"
+        vpidx2 := vpidx2 + 1
+    | .mbConv ic oc expand kSize _ nBlocks _useSE =>
+      for bi in [:nBlocks] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := blockIc * expand
+        let gTyM := tensorTy [mid]; let gTyO := tensorTy [oc]
+        if expand != 1 then
+          params := params ++ s!"      %v_W{vpidx2}: {tensorTy [mid, blockIc, 1, 1]}, %v_g{vpidx2}: {gTyM}, %v_bt{vpidx2}: {gTyM},\n"
+          vpidx2 := vpidx2 + 1
+        params := params ++ s!"      %v_W{vpidx2}: {tensorTy [mid, 1, kSize, kSize]}, %v_g{vpidx2}: {gTyM}, %v_bt{vpidx2}: {gTyM},\n"
         vpidx2 := vpidx2 + 1
         params := params ++ s!"      %v_W{vpidx2}: {tensorTy [oc, mid, 1, 1]}, %v_g{vpidx2}: {gTyO}, %v_bt{vpidx2}: {gTyO},\n"
         vpidx2 := vpidx2 + 1
