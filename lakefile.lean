@@ -208,6 +208,9 @@ lean_exe «test-resnet-fwd» where
 lean_exe «test-resnet-residual» where
   root := `TestResnetResidual
 
+lean_exe «test-spec-helpers» where
+  root := `TestSpecHelpers
+
 lean_exe «test-codegen-ts» where
   root := `TestCodegenTrainStep
 
