@@ -14,12 +14,12 @@ Hardware: AMD Radeon 7900 XTX (gfx1100) via ROCm 7.2 / IREE.
 |---|---|---|---|
 | ResNet-34 | 21.3M | **90.29%** | basic residual blocks (3x3 + 3x3) |
 | ResNet-50 | 23.5M | **89.40%** | bottleneck blocks (1x1 → 3x3 → 1x1) |
+| EfficientNetV2-S | 38.2M | **88.50%** | fusedMbConv early stages + MBConv+SE later |
 | EfficientNet-B0 | 7.2M | **87.58%** | MBConv with swish + sigmoid SE |
 | MobileNetV2 | 2.2M | **87.09%** | depthwise separable + inverted residual |
 | MobileNetV3-Large | 3.0M | **86.48%** | exact h-swish + h-sigmoid SE |
 | MobileNetV4-Medium | 4.1M | **84.58%** | Universal Inverted Bottleneck (15 blocks, 4 variants from 1 primitive) |
 | ViT-Tiny | 5.5M | **71.70%** | patch embed + 12 transformer blocks (data-hungry) |
-| EfficientNetV2-S | 38.2M | _in progress_ | fusedMbConv + MBConv stages |
 
 ## Per-epoch eval history (running BN stats)
 
@@ -130,6 +130,23 @@ philosophy in action.
 | 60 | 84.43% |
 | 70 | 84.84% |
 | 80 | **84.58%** |
+
+### EfficientNetV2-S
+
+Three Fused-MBConv stages early (where depthwise is slow on hardware),
+then three standard MBConv-with-SE stages. 38M params, 110 BN layers,
+~9 min/epoch.
+
+| Epoch | Val acc |
+|---|---|
+| 10 | 75.79% |
+| 20 | 82.89% |
+| 30 | 85.81% |
+| 40 | 86.53% |
+| 50 | 87.35% |
+| 60 | 87.99% |
+| 70 | 88.32% |
+| 80 | **88.50%** |
 
 ## Training recipe ablation (ResNet-34)
 
