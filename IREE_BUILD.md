@@ -23,17 +23,25 @@ were hit) lives in [`IREE.md`](IREE.md). The ROCm-specific variant is in
 | `ffi/libiree_ffi.so` | every Lean trainer links `-liree_ffi` | the link command in §4 |
 | MNIST data | input | `./download_mnist.sh` |
 
-## 1. Install the IREE compiler
+## 1. Install the IREE compiler (plus CMake / Ninja)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install iree-base-compiler
+pip install iree-base-compiler cmake ninja
 iree-compile --version
+cmake --version
+ninja --version
 ```
 
-The Lean trainers shell out to `iree-compile` from `$PATH`, so make sure
-the venv is active when you run them (or symlink it somewhere on `PATH`).
+`cmake` and `ninja` are only needed for §2 (building the IREE runtime). If
+your distro already ships recent versions on `PATH` you can skip them, but
+pip-installing inside the venv avoids version-skew surprises — the IREE
+runtime-build CMakeLists wants a relatively new CMake.
+
+The Lean trainers shell out to `iree-compile` from `$PATH` (actually from
+`./.venv/bin/iree-compile` — see `LeanMlir/Types.lean`), so make sure the
+venv is active when you run them.
 
 ## 2. Build the IREE runtime from source
 
@@ -207,15 +215,65 @@ HAL driver matching 'cuda'/'hip'".
 ```bash
 ./download_mnist.sh                        # → data/*-ubyte
 lake build mnist-mlp-train                 # links -liree_ffi from ./ffi
+```
+
+**Heads up: mnist-mlp is not self-bootstrapping.** Unlike every later
+trainer (`resnet34-train`, `mobilenet-v2-train`, …), `MainMlpTrain.lean`
+does **not** run `generateTrainStep` + `iree-compile` on startup — it
+assumes two pre-built vmfbs already exist under `.lake/build/`:
+
+| File | Source | Who builds it |
+|---|---|---|
+| `.lake/build/mnist_mlp.vmfb` | Lean codegen (`MainMlpMlir.lean`) | run `mnist-mlp-mlir` once |
+| `.lake/build/train_step.vmfb` | hand-written (`mlir_poc/hand_train_step.mlir`) | `iree-compile` manually |
+
+So the actual run-from-scratch sequence is:
+
+```bash
+# 6a. Forward vmfb (Lean codegen + iree-compile, happens inside the binary).
+lake build mnist-mlp-mlir
+.lake/build/bin/mnist-mlp-mlir
+# → writes .lake/build/mnist_mlp.mlir + .lake/build/mnist_mlp.vmfb
+
+# 6b. Train-step vmfb (hand-written MLIR, compiled directly).
+iree-compile mlir_poc/hand_train_step.mlir \
+  --iree-hal-target-backends=cuda --iree-cuda-target=sm_86 \
+  -o .lake/build/train_step.vmfb
+
+# 6c. Train.
 .lake/build/bin/mnist-mlp-train
 ```
 
-Expected output: 12 epochs, ~16 s/epoch on a modest GPU, final
+Expected output: 12 epochs, ~14-16 s/epoch on a modest GPU, final
 accuracy ≈ 97.9%.
+
+For AMD/ROCm in step 6b, swap to
+`--iree-hal-target-backends=rocm --iree-rocm-target=gfx1100`.
 
 If you see `error while loading shared libraries: libiree_ffi.so`, it's
 an rpath issue — the lakefile sets `-Wl,-rpath,./ffi`, so run the binary
 from the repo root (not from `.lake/build/bin/`).
+
+### Why mnist-mlp is special
+
+`MainMlpTrain.lean` is a **phase-2 artifact** that predates the Lean-side
+codegen for VJPs. When it was written, train_step MLIR was hand-authored
+(see `mlir_poc/hand_train_step.mlir`, ~130 lines, written byte-exact
+against JAX autodiff). The `MlirCodegen.generateTrainStep` machinery came
+later and was retrofitted into every newer trainer — `MainResnetTrain.lean`
+line 100 calls it directly and produces + compiles its own train-step
+vmfb at startup. `MainMlpTrain.lean` was on the "refactor to codegen"
+TODO list in `IREE.md` and never got done, so it still opens the two
+vmfb files from disk.
+
+Net effect for a fresh clone: **every other architecture** (resnet34,
+mobilenet, efficientnet, vit, vgg, …) is one command —
+`lake build <x>-train && .lake/build/bin/<x>-train` — because the trainer
+codegens + compiles its own MLIR on first run. **mnist-mlp alone** needs
+the two-step vmfb dance above. If you want, you can run `mnist-cnn-train`
+or any of the bigger trainers as a simpler "does it all work" smoke test,
+with the caveat that they download bigger datasets and spend 5-15 min in
+`iree-compile` before the first training batch.
 
 ## Common failure modes
 
