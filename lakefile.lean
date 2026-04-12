@@ -157,17 +157,6 @@ lean_exe «mobilenet-v4-train» where
     "-liree_ffi", "-Wl,-rpath,./ffi",
     "-Wl,--allow-shlib-undefined"]
 
-lean_exe «mnist-cnn-mlir» where
-  root := `MainCnnMlir
-
-lean_exe «mnist-mlp-mlir» where
-  root := `MainMlpMlir
-  moreLinkArgs := #[
-    "-L./ffi",
-    "-liree_ffi",
-    "-Wl,-rpath,./ffi",
-    "-Wl,--allow-shlib-undefined"]
-
 lean_exe «test-iree» where
   root := `TestIreeRuntime
   moreLinkArgs := #[
@@ -241,18 +230,11 @@ lean_exe «cifar-cnn-train-f32» where
     "-Wl,-rpath,./ffi",
     "-Wl,--allow-shlib-undefined"]
 
-lean_exe «cifar-cnn-train» where
-  root := `MainCifarTrain
-  moreLinkArgs := #[
-    "-L./ffi",
-    "-liree_ffi",
-    "-Wl,-rpath,./ffi",
-    "-Wl,--allow-shlib-undefined"]
-
-lean_exe «mnist-mlp-train» where
-  root := `MainMlpTrain
-  moreLinkArgs := #[
-    "-L./ffi",
-    "-liree_ffi",
-    "-Wl,-rpath,./ffi",
-    "-Wl,--allow-shlib-undefined"]
+-- historical/ trainers (pre-codegen, not in the unified train loop)
+-- kept for reference but not actively built; uncomment to test:
+-- lean_exe «cifar-cnn-train» where
+--   root := `MainCifarTrain
+--   srcDir := "historical"
+-- lean_exe «mnist-mlp-train» where
+--   root := `MainMlpTrain
+--   srcDir := "historical"
