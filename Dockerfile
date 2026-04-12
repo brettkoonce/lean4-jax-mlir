@@ -95,14 +95,17 @@ COPY --from=builder /build/repo/data/train-images-idx3-ubyte /app/data/
 COPY --from=builder /build/repo/data/train-labels-idx1-ubyte /app/data/
 COPY --from=builder /build/repo/data/t10k-images-idx3-ubyte /app/data/
 COPY --from=builder /build/repo/data/t10k-labels-idx1-ubyte /app/data/
-# iree-compile + its Python libs (needed for first-run vmfb generation)
-COPY --from=builder /build/venv/ /app/venv/
+# iree-compile: copy the native binary + its shared libs.
+COPY --from=builder \
+  /build/venv/lib/python3.10/site-packages/iree/compiler/_mlir_libs/ \
+  /app/iree-libs/
+RUN ln -s /app/iree-libs/iree-compile /app/bin/iree-compile
 
 WORKDIR /app
-ENV LD_LIBRARY_PATH=/app/ffi
+ENV LD_LIBRARY_PATH=/app/ffi:/app/iree-libs
 ENV IREE_BACKEND=llvm-cpu
 ENV IREE_DEVICE=local-task
-ENV PATH="/app/venv/bin:/app/bin:${PATH}"
+ENV PATH="/app/bin:${PATH}"
 
 # First run: generates MLIR → compiles vmfb (~30s) → trains 12 epochs (~5 min)
 CMD ["mnist-mlp-train-f32", "data"]
