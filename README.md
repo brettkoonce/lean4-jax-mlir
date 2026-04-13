@@ -85,7 +85,6 @@ crop (256→224) + horizontal flip, **running BN stats for eval**.
 | MobileNetV3-Large | 3.0M | **86.48%** |
 | MobileNetV4-Medium | 4.1M | **84.58%** |
 | ViT-Tiny | 5.5M | **71.70%** |
-| EfficientNetV2-S | 38.2M | _running_ |
 
 Per-epoch eval histories and ablation tables in [`RESULTS.md`](RESULTS.md).
 
