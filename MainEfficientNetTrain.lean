@@ -30,6 +30,7 @@ def efficientNetB0Config : TrainConfig where
   cosineDecay  := true
   warmupEpochs := 3
   augment      := true
+  labelSmoothing := 0.1
 
 def main (args : List String) : IO Unit :=
   efficientNetB0.train efficientNetB0Config (args.head?.getD "data/imagenette")

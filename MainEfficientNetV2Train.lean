@@ -29,6 +29,7 @@ def efficientNetV2SConfig : TrainConfig where
   cosineDecay  := true
   warmupEpochs := 3
   augment      := true
+  labelSmoothing := 0.1
 
 def main (args : List String) : IO Unit :=
   efficientNetV2S.train efficientNetV2SConfig (args.head?.getD "data/imagenette")

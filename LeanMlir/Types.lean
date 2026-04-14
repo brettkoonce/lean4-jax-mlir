@@ -49,6 +49,7 @@ structure TrainConfig where
   cosineDecay  : Bool := false
   warmupEpochs : Nat := 0
   augment      : Bool := false
+  labelSmoothing : Float := 0.0
 deriving Repr
 
 inductive DatasetKind where

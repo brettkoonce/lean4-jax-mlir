@@ -27,6 +27,7 @@ def resnet50Config : TrainConfig where
   cosineDecay  := true
   warmupEpochs := 3
   augment      := true
+  labelSmoothing := 0.1
 
 def main (args : List String) : IO Unit :=
   resnet50.train resnet50Config (args.head?.getD "data/imagenette")

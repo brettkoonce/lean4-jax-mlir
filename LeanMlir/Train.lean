@@ -90,6 +90,9 @@ def compileVmfbs (spec : NetSpec) (cfg : TrainConfig) : IO String := do
 
   IO.eprintln "Generating train step MLIR..."
   let trainMlir := MlirCodegen.generateTrainStep spec cfg.batchSize ("jit_" ++ spec.sanitizedName ++ "_train_step")
+    (labelSmoothing := cfg.labelSmoothing)
+    (weightDecay := cfg.weightDecay)
+    (useAdam := cfg.useAdam)
   IO.FS.writeFile s!"{pfx}_train_step.mlir" trainMlir
   IO.eprintln s!"  {trainMlir.length} chars"
 
@@ -248,17 +251,20 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
     let (sImg, sLbl) ← F32.shuffle curImg curLbl nTrain.toUSize trainPixels.toUSize (epoch + 42).toUSize
     curImg := sImg; curLbl := sLbl
 
-    let lr : Float := if epoch < warmup then
-      baseLR * (epoch.toFloat + 1.0) / warmup.toFloat
+    let lr : Float := if cfg.cosineDecay then
+      if epoch < warmup then
+        baseLR * (epoch.toFloat + 1.0) / warmup.toFloat
+      else
+        baseLR * 0.5 * (1.0 + Float.cos (3.14159265358979 * (epoch.toFloat - warmup.toFloat) / (epochs.toFloat - warmup.toFloat)))
     else
-      baseLR * 0.5 * (1.0 + Float.cos (3.14159265358979 * (epoch.toFloat - warmup.toFloat) / (epochs.toFloat - warmup.toFloat)))
+      baseLR  -- constant LR
 
     let mut epochLoss : Float := 0.0
     let t0 ← IO.monoMsNow
     for bi in [:bpE] do
       globalStep := globalStep + 1
       let xbaRaw := F32.sliceImages curImg (bi * batchN) batchN trainPixels
-      let xba ← dio.augmentBatch xbaRaw batch (epoch * 10000 + bi)
+      let xba ← if cfg.augment then dio.augmentBatch xbaRaw batch (epoch * 10000 + bi) else pure xbaRaw
       let yb := F32.sliceLabels curLbl (bi * batchN) batchN
       let packed := (p.append m).append v
       let ts0 ← IO.monoMsNow

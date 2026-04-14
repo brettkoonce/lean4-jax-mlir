@@ -69,6 +69,10 @@ lean_exe «vit-tiny-train» where
   root := `MainVitTrain
   moreLinkArgs := ireeLink
 
+lean_exe «ablation» where
+  root := `MainAblation
+  moreLinkArgs := ireeLink
+
 lean_exe «vgg-train» where
   root := `MainVggTrain
   moreLinkArgs := ireeLink

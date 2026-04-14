@@ -5,6 +5,9 @@ data/
 # Training logs
 *.log
 
+# Documents
+*.docx
+
 # FFI build artifacts
 ffi/*.o
 ffi/*.so

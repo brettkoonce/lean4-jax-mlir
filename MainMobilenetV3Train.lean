@@ -39,6 +39,7 @@ def mobilenetV3LargeConfig : TrainConfig where
   cosineDecay  := true
   warmupEpochs := 3
   augment      := true
+  labelSmoothing := 0.1
 
 def main (args : List String) : IO Unit :=
   mobilenetV3Large.train mobilenetV3LargeConfig (args.head?.getD "data/imagenette")

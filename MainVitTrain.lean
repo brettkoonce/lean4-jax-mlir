@@ -24,6 +24,7 @@ def vitTinyConfig : TrainConfig where
   cosineDecay  := true
   warmupEpochs := 5
   augment      := true
+  labelSmoothing := 0.1
 
 def main (args : List String) : IO Unit :=
   vitTiny.train vitTinyConfig (args.head?.getD "data/imagenette")

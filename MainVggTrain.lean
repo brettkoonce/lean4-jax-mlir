@@ -45,6 +45,7 @@ def vgg16bnConfig : TrainConfig where
   cosineDecay  := true
   warmupEpochs := 3
   augment      := true
+  labelSmoothing := 0.1
 
 def main (args : List String) : IO Unit :=
   vgg16bn.train vgg16bnConfig (args.head?.getD "data/imagenette")
