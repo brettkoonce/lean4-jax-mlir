@@ -40,28 +40,71 @@ Tensor.lean                    ← axioms + VJP framework
 
 ## Axioms
 
-Eight facts from real analysis (`#print axioms` verified):
+All 26 axiom declarations across the proof suite, grouped by file:
 
-| Axiom | What it says | Used by |
-|-------|-------------|---------|
-| `pdiv` | Partial derivative exists | everything |
-| `pdiv_id` | ∂xᵢ/∂xⱼ = δᵢⱼ | identity, residual, SE |
-| `pdiv_comp` | Chain rule: ∂(g∘f)/∂x = Σ (∂f/∂x)(∂g/∂f) | vjp_comp, BN, layerNorm |
-| `pdiv_add` | Sum rule: ∂(f+g)/∂x = ∂f/∂x + ∂g/∂x | biPath, residual |
-| `pdiv_mul` | Product rule: ∂(f·g)/∂x = f'g + fg' | elemwiseProduct, SE |
-| `pdiv_dense` | Dense layer Jacobian | dense |
-| `pdiv_bnAffine` | ∂(γv+β)/∂v = γδᵢⱼ | BN affine, layerNorm |
-| `pdiv_bnNormalize` | ∂x̂ⱼ/∂xᵢ = (istd/N)(Nδᵢⱼ − 1 − x̂ᵢx̂ⱼ) | BN normalize, layerNorm |
-| `pdiv_softmax` | Softmax Jacobian | softmax, attention |
+**Tensor.lean** — calculus foundations:
+| Axiom | What it says |
+|-------|-------------|
+| `pdiv` | Partial derivative function (existence) |
+| `sdiv` | Scalar derivative function |
+| `pdiv_id` | ∂xᵢ/∂xⱼ = δᵢⱼ |
+| `pdiv_comp` | Chain rule |
+| `pdiv_add` | Sum rule |
+| `pdiv_mul` | Product rule |
+
+**MLP.lean** — dense layers:
+| Axiom | What it says |
+|-------|-------------|
+| `pdiv_dense` | Dense layer Jacobian |
+| `pdiv_relu` | ReLU Jacobian (diagonal, 0/1) |
+| `softmaxCE_grad` | Softmax cross-entropy gradient = softmax − onehot |
+
+**CNN.lean** — convolution and pooling:
+| Axiom | What it says |
+|-------|-------------|
+| `conv2d` | Conv forward (function signature) |
+| `conv2d_input_grad` | dx = conv with reversed kernel |
+| `conv2d_weight_grad` | dW = input ⊗ grad (transpose trick) |
+| `maxPool2` | MaxPool forward (function signature) |
+| `maxPool2_input_grad` | Route gradient to argmax positions |
+| `flatten` / `unflatten` | Reshape between 3D and 1D |
+
+**BatchNorm.lean** — the hard one:
+| Axiom | What it says |
+|-------|-------------|
+| `pdiv_bnAffine` | ∂(γv+β)/∂v = γδᵢⱼ |
+| `pdiv_bnNormalize` | ∂x̂ⱼ/∂xᵢ = (istd/N)(Nδᵢⱼ − 1 − x̂ᵢx̂ⱼ) |
+
+**Depthwise.lean** — depthwise convolution:
+| Axiom | What it says |
+|-------|-------------|
+| `depthwiseConv2d` | Depthwise conv forward |
+| `depthwiseConv2d_input_grad` | dx per-channel |
+| `depthwiseConv2d_weight_grad` | dW per-channel |
+
+**LayerNorm.lean** — layer norm and GELU:
+| Axiom | What it says |
+|-------|-------------|
+| `geluScalar` | GELU activation (function signature) |
+| `geluScalarDeriv` | GELU derivative |
+| `pdiv_gelu` | GELU Jacobian (diagonal) |
+
+**Attention.lean** — softmax and attention:
+| Axiom | What it says |
+|-------|-------------|
+| `pdiv_softmax` | Softmax Jacobian (rank-1 correction) |
+| `sdpa_has_vjp` | Scaled dot-product attention VJP |
 
 Plus three Lean core axioms (`propext`, `Classical.choice`, `Quot.sound`)
-that are present in every nontrivial Lean program.
+present in every nontrivial Lean program.
 
 Everything else — every `HasVJP` instance, every composition,
 every correctness theorem — is proved from these axioms by
 Lean's type checker.
 
-## `#print axioms` output
+## `#print axioms` output (HasVJP instances)
+
+Which axioms each proved theorem actually uses (via `lake env lean`):
 
 ```
 vjp_comp               → pdiv, pdiv_comp
@@ -70,14 +113,16 @@ elemwiseProduct_has_vjp → pdiv, pdiv_mul
 identity_has_vjp       → pdiv, pdiv_id
 dense_has_vjp          → pdiv, pdiv_dense
 bn_has_vjp             → pdiv, pdiv_bnAffine, pdiv_bnNormalize, pdiv_comp
+bn_input_grad_correct  → pdiv, pdiv_bnAffine, pdiv_bnNormalize, pdiv_comp
 bnNormalize_has_vjp    → pdiv, pdiv_bnNormalize
+bnAffine_has_vjp       → pdiv, pdiv_bnAffine
 residual_has_vjp       → pdiv, pdiv_add, pdiv_id
 seBlock_has_vjp        → pdiv, pdiv_id, pdiv_mul
 layerNorm_has_vjp      → pdiv, pdiv_bnAffine, pdiv_bnNormalize, pdiv_comp
 softmax_has_vjp        → pdiv, pdiv_softmax
 ```
 
-(Lean core axioms `propext`, `Classical.choice`, `Quot.sound` omitted for clarity.)
+(Lean core axioms `propext`, `Classical.choice`, `Quot.sound` omitted — present in every nontrivial Lean program.)
 
 ## The three rules
 
