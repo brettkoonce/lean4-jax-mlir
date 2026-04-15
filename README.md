@@ -6,7 +6,8 @@ in one fused function), compile to GPU via IREE, train end-to-end. No Python
 runtime, no autograd library — the gradients are computed at codegen time
 in Lean.
 
-Replicating the models from [Convolutional Neural Networks with Swift for TensorFlow](https://doi.org/10.1007/978-1-4842-6168-2) (Apress).
+Companion code for the upcoming book *Verified Deep Learning with Lean4*
+(follow-up to [Convolutional Neural Networks with Swift for TensorFlow](https://doi.org/10.1007/978-1-4842-6168-2), Apress).
 
 ## Three phases
 
