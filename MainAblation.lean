@@ -17,7 +17,28 @@ import LeanMlir
 -- Specs
 -- ═══════════════════════════════════════════════════════════════════
 
--- Chapter 1: MLP on MNIST (no convolutions)
+-- Chapter 0: Single-layer linear classifier on MNIST
+-- Literally one matmul: y = Wx + b, no activation, no hidden layer.
+-- The reader can trace the entire gradient by hand on one page.
+def mnistLinear : NetSpec where
+  name := "MNIST-Linear"
+  imageH := 28
+  imageW := 28
+  layers := [
+    .dense 784 10 .identity
+  ]
+
+-- Chapter 0.5: Single hidden layer MLP
+def mnistShallow : NetSpec where
+  name := "MNIST-Shallow"
+  imageH := 28
+  imageW := 28
+  layers := [
+    .dense 784 128 .relu,
+    .dense 128  10 .identity
+  ]
+
+-- Chapter 1: MLP on MNIST (3-layer, the "real" MLP)
 def mnistMlp : NetSpec where
   name := "MNIST-MLP"
   imageH := 28
@@ -26,6 +47,47 @@ def mnistMlp : NetSpec where
     .dense 784 512 .relu,
     .dense 512 512 .relu,
     .dense 512  10 .identity
+  ]
+
+-- Width ablation: single hidden layer, varying width
+def mnistHidden (w : Nat) : NetSpec where
+  name := s!"MNIST-H{w}"
+  imageH := 28
+  imageW := 28
+  layers := [
+    .dense 784 w .relu,
+    .dense w  10 .identity
+  ]
+
+-- Width ablation: 2-conv CNN, varying filter count (no BN, for ch2)
+def mnistCnnWidth (f : Nat) : NetSpec where
+  name := s!"MNIST-CNN-f{f}"
+  imageH := 28
+  imageW := 28
+  layers := [
+    .conv2d 1 f 3 .same .relu,
+    .conv2d f f 3 .same .relu,
+    .maxPool 2 2,
+    .flatten,
+    .dense (f * 14 * 14) 128 .relu,
+    .dense 128  10 .identity
+  ]
+
+-- Width ablation: 2-conv CNN on CIFAR, varying filter count (with BN, for ch3)
+def cifarCnnWidth (f : Nat) : NetSpec where
+  name := s!"CIFAR-BN-f{f}"
+  imageH := 32
+  imageW := 32
+  layers := [
+    .convBn 3 f 3 1 .same,
+    .convBn f f 3 1 .same,
+    .maxPool 2 2,
+    .convBn f (f*2) 3 1 .same,
+    .convBn (f*2) (f*2) 3 1 .same,
+    .maxPool 2 2,
+    .flatten,
+    .dense (f * 2 * 8 * 8) 512 .relu,
+    .dense 512 10 .identity
   ]
 
 -- Chapter 2: CNN on MNIST (S4TF book match — no BN, 2 conv layers)
@@ -195,7 +257,34 @@ structure AblationRun where
   dataDir  : String  -- default data dir
 
 def ablations : List (String × AblationRun) := [
-  -- Chapter 1: MLP on MNIST
+  -- Chapter 0: Linear classifier (one matmul, ~7850 params)
+  ("linear-sgd",       ⟨mnistLinear,  s4tfBaseline 12,  .mnist, "data"⟩),
+  ("linear-adam",      ⟨mnistLinear,  adamOnly 12,      .mnist, "data"⟩),
+
+  -- Chapter 0.5: Shallow MLP (one hidden layer, ~101K params)
+  ("shallow-sgd",      ⟨mnistShallow, s4tfBaseline 15,  .mnist, "data"⟩),
+  ("shallow-adam",     ⟨mnistShallow, adamOnly 15,      .mnist, "data"⟩),
+
+  -- Width ablation: single hidden layer MLP, SGD 0.002
+  ("width-h32",        ⟨mnistHidden 32,  sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-h64",        ⟨mnistHidden 64,  sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-h128",       ⟨mnistHidden 128, sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-h256",       ⟨mnistHidden 256, sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-h512",       ⟨mnistHidden 512, sgdLowLr2 15, .mnist, "data"⟩),
+
+  -- Width ablation: MNIST CNN (no BN), SGD 0.002
+  ("width-cnn-f8",     ⟨mnistCnnWidth 8,  sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-cnn-f16",    ⟨mnistCnnWidth 16, sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-cnn-f32",    ⟨mnistCnnWidth 32, sgdLowLr2 15, .mnist, "data"⟩),
+  ("width-cnn-f64",    ⟨mnistCnnWidth 64, sgdLowLr2 15, .mnist, "data"⟩),
+
+  -- Width ablation: CIFAR CNN (with BN), SGD 0.002
+  ("width-cifar-f8",   ⟨cifarCnnWidth 8,  sgdLowLr2 30, .cifar10, "data"⟩),
+  ("width-cifar-f16",  ⟨cifarCnnWidth 16, sgdLowLr2 30, .cifar10, "data"⟩),
+  ("width-cifar-f32",  ⟨cifarCnnWidth 32, sgdLowLr2 30, .cifar10, "data"⟩),
+  ("width-cifar-f64",  ⟨cifarCnnWidth 64, sgdLowLr2 30, .cifar10, "data"⟩),
+
+  -- Chapter 1: 3-layer MLP (~670K params)
   ("mlp-sgd",         ⟨mnistMlp,     s4tfBaseline 12,  .mnist, "data"⟩),
   ("mlp-sgd-low",     ⟨mnistMlp,     sgdLowLr 15,     .mnist, "data"⟩),
   ("mlp-adam",         ⟨mnistMlp,     adamOnly 12,     .mnist, "data"⟩),
