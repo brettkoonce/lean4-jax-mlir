@@ -25,6 +25,9 @@ jobs:
           key: lake-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
           restore-keys: lake-
 
+      - name: Install Python deps
+        run: pip install scipy numpy
+
       - name: Build proofs
         run: |
           lake build LeanMlir.Proofs.Tensor \
