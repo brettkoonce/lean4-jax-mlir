@@ -72,6 +72,15 @@ axiom pdiv_mul {m n : Nat} (f g : Vec m → Vec n) (x : Vec m)
 axiom pdiv_id {n : Nat} (x : Vec n) (i j : Fin n) :
     pdiv (fun y : Vec n => y) x i j = if i = j then 1 else 0
 
+/-- **Partial derivative of a constant function is zero.**
+
+    For any `c : Vec n` and any input `x`, the function `fun _ => c`
+    has zero Jacobian. Standard calculus; axiomatized to stay inside
+    our `pdiv` framework. (Mathlib equivalent: `fderiv_const`.) -/
+axiom pdiv_const {m n : Nat} (c : Vec n) (x : Vec m)
+    (i : Fin m) (j : Fin n) :
+    pdiv (fun _ : Vec m => c) x i j = 0
+
 -- ════════════════════════════════════════════════════════════════
 -- § VJP Framework
 -- ════════════════════════════════════════════════════════════════
@@ -385,11 +394,57 @@ axiom pdivMat_rowIndep {m n p : Nat} (g : Vec n → Vec p)
     pdivMat (fun M : Mat m n => fun r => g (M r)) A i j k l =
     if i = k then pdiv g (A i) j l else 0
 
-/-- **Scalar-scale Jacobian**: `∂(s · A')_{kl} / ∂A'_{ij} = s · δ_{ik,jl}`. -/
-axiom pdivMat_scalarScale {m n : Nat} (s : ℝ) (A : Mat m n)
+/-- **Scalar-scale Jacobian** — theorem, derived from `pdiv_mul` +
+    `pdiv_const` + `pdiv_id` via the flatten bijection.
+    `∂(s · A')_{kl} / ∂A'_{ij} = s · δ_{ik,jl}`. -/
+theorem pdivMat_scalarScale {m n : Nat} (s : ℝ) (A : Mat m n)
     (i : Fin m) (j : Fin n) (k : Fin m) (l : Fin n) :
     pdivMat (fun M : Mat m n => fun r c => s * M r c) A i j k l =
-    if i = k ∧ j = l then s else 0
+    if i = k ∧ j = l then s else 0 := by
+  unfold pdivMat
+  -- Step 1: the flattened scalar-scale function simplifies to `fun v k' => s * v k'`.
+  -- This uses Mat.unflatten_flatten roundtrip pointwise.
+  have h_reduces :
+      (fun v : Vec (m * n) =>
+        Mat.flatten ((fun M : Mat m n => fun r c => s * M r c) (Mat.unflatten v))) =
+      (fun v : Vec (m * n) => fun k' : Fin (m * n) => s * v k') := by
+    funext v k'
+    show s * Mat.unflatten v (finProdFinEquiv.symm k').1 (finProdFinEquiv.symm k').2 = s * v k'
+    unfold Mat.unflatten
+    -- Goal: s * v (fPF ((fPF.symm k').1, (fPF.symm k').2)) = s * v k'
+    rw [show ((finProdFinEquiv.symm k').1, (finProdFinEquiv.symm k').2) = finProdFinEquiv.symm k'
+        from rfl]
+    rw [Equiv.apply_symm_apply]
+  rw [h_reduces]
+  -- Step 2: rewrite as a product of (constant s) and (identity).
+  have h_product :
+      (fun v : Vec (m * n) => fun k' : Fin (m * n) => s * v k') =
+      (fun v k' =>
+        (fun (_ : Vec (m * n)) (_ : Fin (m * n)) => s) v k' *
+        (fun (w : Vec (m * n)) => w) v k') := rfl
+  rw [h_product]
+  -- Step 3: apply pdiv_mul.
+  rw [pdiv_mul (fun _ _ => s) (fun w => w)]
+  -- Step 4: pdiv_const for the constant factor, pdiv_id for identity.
+  -- The constant function `fun _ _ => s` has Vec m = Vec (m*n) → Vec n = Vec (m*n) shape;
+  -- we need to treat the inner constant as `fun _ => (fun _ => s)` for pdiv_const.
+  have h_const :
+      pdiv (fun _ : Vec (m * n) => fun _ : Fin (m * n) => s) (Mat.flatten A)
+        (finProdFinEquiv (i, j)) (finProdFinEquiv (k, l)) = 0 :=
+    pdiv_const (fun _ : Fin (m * n) => s) (Mat.flatten A)
+      (finProdFinEquiv (i, j)) (finProdFinEquiv (k, l))
+  rw [h_const, pdiv_id]
+  -- Goal after simp: collapses both sides via the bijection injectivity.
+  simp only [zero_mul, zero_add, mul_ite, mul_one, mul_zero]
+  -- Now: (if fPF(i,j) = fPF(k,l) then s else 0) = if i = k ∧ j = l then s else 0
+  by_cases hij : i = k ∧ j = l
+  · obtain ⟨hi, hj⟩ := hij; subst hi; subst hj; simp
+  · have hne : finProdFinEquiv (i, j) ≠ finProdFinEquiv (k, l) := by
+      intro heq
+      apply hij
+      have := finProdFinEquiv.injective heq
+      exact ⟨(Prod.mk.inj this).1, (Prod.mk.inj this).2⟩
+    rw [if_neg hij, if_neg hne]
 
 /-- **Transpose Jacobian**: `∂A^T_{kl} / ∂A_{ij} = δ_{l=i, k=j}`. -/
 axiom pdivMat_transpose {m n : Nat} (A : Mat m n)

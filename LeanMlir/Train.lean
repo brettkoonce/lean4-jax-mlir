@@ -236,7 +236,8 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
   let bnShapes := spec.bnShapesBA
   let nBnStats := spec.nBnStats
 
-  IO.eprintln s!"training: {bpE} batches/epoch, batch={batchN}, Adam, lr={baseLR}, cosine warmup={warmup}, label_smooth=0.1, wd={cfg.weightDecay}"
+  let optName := if cfg.useAdam then "Adam" else "SGD+momentum"
+  IO.eprintln s!"training: {bpE} batches/epoch, batch={batchN}, {optName}, lr={baseLR}, cosine warmup={warmup}, label_smooth={cfg.labelSmoothing}, wd={cfg.weightDecay}"
   IO.eprintln s!"  BN layers: {spec.bnLayers.size}, BN stat floats: {nBnStats}"
 
   let mut p := params
