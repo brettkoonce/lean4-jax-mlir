@@ -249,6 +249,89 @@ noncomputable def identityMat_has_vjp (a b : Nat) :
     simp
 
 -- ════════════════════════════════════════════════════════════════
+-- § Matrix VJP Building Blocks (matmul, row-independent functions)
+-- ════════════════════════════════════════════════════════════════
+
+/-! The three axioms here are local Jacobians for the operations that
+appear in scaled dot-product attention's backward pass:
+
+1. **`pdivMat_matmul_left_const`** — right-factor varies, left factor fixed:
+   `∂(C · B')_{kl} / ∂B'_{ij} = C_{ki} · [l = j]`.
+2. **`pdivMat_matmul_right_const`** — left factor varies, right factor fixed:
+   `∂(A' · D)_{kl} / ∂A'_{ij} = D_{jl} · [i = k]`.
+3. **`pdivMat_rowIndep`** — functions that act row-wise have block-diagonal
+   Jacobians, with the per-row block equal to the vector Jacobian of the
+   row function `g`.
+
+Each is a direct transcription of an elementary calculus fact. They are
+numerically gradient-checked in `check_axioms.py`. -/
+
+axiom pdivMat_matmul_left_const {m p q : Nat} (C : Mat m p) (B : Mat p q)
+    (i : Fin p) (j : Fin q) (k : Fin m) (l : Fin q) :
+    pdivMat (fun B' : Mat p q => Mat.mul C B') B i j k l =
+    if l = j then C k i else 0
+
+axiom pdivMat_matmul_right_const {m p q : Nat} (A : Mat m p) (D : Mat p q)
+    (i : Fin m) (j : Fin p) (k : Fin m) (l : Fin q) :
+    pdivMat (fun A' : Mat m p => Mat.mul A' D) A i j k l =
+    if i = k then D j l else 0
+
+axiom pdivMat_rowIndep {m n p : Nat} (g : Vec n → Vec p)
+    (A : Mat m n) (i : Fin m) (j : Fin n) (k : Fin m) (l : Fin p) :
+    pdivMat (fun M : Mat m n => fun r => g (M r)) A i j k l =
+    if i = k then pdiv g (A i) j l else 0
+
+/-- **Matmul with right factor varying, left factor fixed** — proved.
+
+    `f : Mat p q → Mat m q`,  `f B' = C · B'`.
+    Backward: `dB' = C^T · dY`. -/
+noncomputable def matmul_left_const_has_vjp {m p q : Nat} (C : Mat m p) :
+    HasVJPMat (fun B' : Mat p q => Mat.mul C B') where
+  backward := fun _B dY => fun i j => ∑ k : Fin m, C k i * dY k j
+  correct := by
+    intro B dY i j
+    simp_rw [pdivMat_matmul_left_const]
+    -- Σ k Σ l, (if l = j then C k i else 0) * dY k l = Σ k, C k i * dY k j
+    congr 1; ext k
+    -- Inner sum over l: collapse if-else via sum_ite_eq
+    have h : ∀ l : Fin q,
+        (if l = j then C k i else 0) * dY k l =
+        if l = j then C k i * dY k j else 0 := by
+      intro l; by_cases hlj : l = j
+      · simp [hlj]
+      · simp [hlj]
+    simp_rw [h]
+    rw [Finset.sum_ite_eq' Finset.univ j (fun _ => C k i * dY k j)]
+    simp
+
+/-- **Matmul with left factor varying, right factor fixed** — proved.
+
+    `f : Mat m p → Mat m q`,  `f A' = A' · D`.
+    Backward: `dA' = dY · D^T`. -/
+noncomputable def matmul_right_const_has_vjp {m p q : Nat} (D : Mat p q) :
+    HasVJPMat (fun A' : Mat m p => Mat.mul A' D) where
+  backward := fun _A dY => fun i j => ∑ l : Fin q, dY i l * D j l
+  correct := by
+    intro A dY i j
+    simp_rw [pdivMat_matmul_right_const]
+    -- Σ k Σ l, (if i = k then D j l else 0) * dY k l = Σ l, dY i l * D j l
+    have h : ∀ k : Fin m, ∀ l : Fin q,
+        (if i = k then D j l else 0) * dY k l =
+        if i = k then D j l * dY i l else 0 := by
+      intro k l; by_cases hik : i = k
+      · simp [hik]
+      · simp [hik]
+    simp_rw [h]
+    rw [Finset.sum_comm]
+    have hinner : ∀ l : Fin q,
+        ∑ k : Fin m, (if i = k then D j l * dY i l else 0) = D j l * dY i l := by
+      intro l
+      rw [Finset.sum_ite_eq Finset.univ i (fun _ => D j l * dY i l)]
+      simp
+    simp_rw [hinner]
+    congr 1; ext l; ring
+
+-- ════════════════════════════════════════════════════════════════
 -- § 3D Tensor VJP Framework (for CNN / Depthwise)
 -- ════════════════════════════════════════════════════════════════
 

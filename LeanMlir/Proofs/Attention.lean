@@ -324,12 +324,35 @@ axiom sdpa_back_K_correct (n d : Nat) (Q K V dOut : Mat n d)
     ∑ k : Fin n, ∑ l : Fin d,
       pdivMat (fun K' => sdpa n d Q K' V) K i j k l * dOut k l
 
-/-- **Correctness of `sdpa_back_V`.** Axiomatized pending Phase 2. -/
-axiom sdpa_back_V_correct (n d : Nat) (Q K V dOut : Mat n d)
+/-- The final matmul in SDPA: for fixed Q, K, the function `V' ↦ sdpa Q K V'`
+    is `V' ↦ W · V'` where `W = sdpa_weights Q K`. Pure rewrite; definitional. -/
+theorem sdpa_eq_mul_weights (n d : Nat) (Q K V : Mat n d) :
+    sdpa n d Q K V = Mat.mul (sdpa_weights n d Q K) V := by
+  unfold sdpa sdpa_weights sdpa_scale
+  rfl
+
+/-- **Correctness of `sdpa_back_V`** — proved, no sorry.
+
+    The V-path is the simplest case: `V'` only enters through the final
+    matmul `out = weights · V'`. So `fun V' => sdpa n d Q K V'` is just
+    `fun V' => Mat.mul W V'` where W is fixed (= `sdpa_weights n d Q K`),
+    and the VJP comes directly from `matmul_left_const_has_vjp`. -/
+theorem sdpa_back_V_correct (n d : Nat) (Q K V dOut : Mat n d)
     (i : Fin n) (j : Fin d) :
     sdpa_back_V n d Q K V dOut i j =
     ∑ k : Fin n, ∑ l : Fin d,
-      pdivMat (fun V' => sdpa n d Q K V') V i j k l * dOut k l
+      pdivMat (fun V' => sdpa n d Q K V') V i j k l * dOut k l := by
+  -- Replace `fun V' => sdpa n d Q K V'` by `fun V' => Mat.mul W V'`.
+  have hfwd : (fun V' : Mat n d => sdpa n d Q K V') =
+              (fun V' : Mat n d => Mat.mul (sdpa_weights n d Q K) V') := by
+    funext V'; exact sdpa_eq_mul_weights n d Q K V'
+  rw [hfwd]
+  -- Apply the matmul VJP correctness backward (i.e., rewrite the RHS
+  -- into the VJP's backward) and then match `sdpa_back_V`.
+  rw [← (matmul_left_const_has_vjp (sdpa_weights n d Q K)).correct V dOut i j]
+  -- Goal: sdpa_back_V n d Q K V dOut i j = Σ k, W k i * dOut k j
+  unfold sdpa_back_V Mat.mul Mat.transpose
+  rfl
 
 -- ════════════════════════════════════════════════════════════════
 -- § 3. Multi-Head wrapping

@@ -55,6 +55,9 @@ All axiom declarations across the proof suite, grouped by file:
 | `pdivMat_comp` | Matrix chain rule |
 | `pdivMat_add` | Matrix sum rule |
 | `pdivMat_id` | Matrix identity Jacobian |
+| `pdivMat_matmul_left_const` | ∂(C·B')/∂B' with C fixed |
+| `pdivMat_matmul_right_const` | ∂(A'·D)/∂A' with D fixed |
+| `pdivMat_rowIndep` | Row-independent function ⇒ block-diagonal Jacobian |
 | `pdiv3` | 3D-tensor partial derivative |
 | `pdiv3_comp` | 3D chain rule |
 | `pdiv3_id` | 3D identity Jacobian |
@@ -106,21 +109,23 @@ All axiom declarations across the proof suite, grouped by file:
 | `pdiv_softmax` | Softmax Jacobian (rank-1 correction) |
 | `sdpa_back_Q_correct` | `sdpa_back_Q` equals the `pdivMat`-contracted cotangent |
 | `sdpa_back_K_correct` | `sdpa_back_K` equals the `pdivMat`-contracted cotangent |
-| `sdpa_back_V_correct` | `sdpa_back_V` equals the `pdivMat`-contracted cotangent |
 
-> The three `sdpa_back_*_correct` axioms replace a previous
-> `sdpa_has_vjp` axiom whose type asserted only "a triple of functions
-> of some shape exists" (trivially true). The new axioms are *honest*
-> correctness claims — each states that the concrete backward
-> formula in `Attention.lean` equals the Jacobian contraction. A full
-> proof awaits the matrix-level VJP framework (Phase 2). Until then,
-> each formula is numerically gradient-checked in `check_axioms.py`.
+> `sdpa_back_V_correct` has been **promoted from axiom to theorem**
+> (Phase 3). It is now proved by composition:
+> `fun V' => sdpa n d Q K V'` is just left-matmul by the fixed
+> `sdpa_weights n d Q K`, so `matmul_left_const_has_vjp` discharges
+> it directly.
+>
+> `sdpa_back_{Q,K}_correct` remain axiomatized pending the
+> composition of four intermediate VJPs (matmul → scale →
+> rowSoftmax → matmul). Each formula is numerically gradient-checked
+> in `check_axioms.py`.
 
 Plus three Lean core axioms (`propext`, `Classical.choice`, `Quot.sound`)
 present in every nontrivial Lean program.
 
-Total: 14 (Tensor) + 3 (MLP) + 9 (CNN) + 2 (BatchNorm) + 4 (Depthwise)
-+ 3 (LayerNorm) + 4 (Attention) = **39 axioms**.
+Total: 17 (Tensor) + 3 (MLP) + 9 (CNN) + 2 (BatchNorm) + 4 (Depthwise)
++ 3 (LayerNorm) + 3 (Attention) = **41 axioms**.
 
 Everything else — every `HasVJP` instance, every composition,
 every correctness theorem — is proved from these axioms by
@@ -138,6 +143,9 @@ identity_has_vjp       → pdiv, pdiv_id
 vjpMat_comp            → pdivMat, pdivMat_comp
 biPathMat_has_vjp      → pdivMat, pdivMat_add
 identityMat_has_vjp    → pdivMat, pdivMat_id
+matmul_left_const_has_vjp  → pdivMat, pdivMat_matmul_left_const
+matmul_right_const_has_vjp → pdivMat, pdivMat_matmul_right_const
+sdpa_back_V_correct    → pdivMat, pdivMat_matmul_left_const
 dense_has_vjp          → pdiv, pdiv_dense
 bn_has_vjp             → pdiv, pdiv_bnAffine, pdiv_bnNormalize, pdiv_comp
 bn_input_grad_correct  → pdiv, pdiv_bnAffine, pdiv_bnNormalize, pdiv_comp
