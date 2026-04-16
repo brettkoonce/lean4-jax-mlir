@@ -3,15 +3,8 @@ name: Verify Proofs
 on:
   push:
     branches: [main]
-    paths:
-      - 'LeanMlir/Proofs/**'
-      - 'LeanMlir/Types.lean'
-      - 'LeanMlir/Spec.lean'
-      - 'lakefile.lean'
-      - 'lean-toolchain'
   pull_request:
-    paths:
-      - 'LeanMlir/Proofs/**'
+  workflow_dispatch:
 
 jobs:
   check-proofs:
