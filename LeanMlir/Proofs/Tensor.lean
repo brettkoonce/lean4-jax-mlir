@@ -81,6 +81,41 @@ axiom pdiv_const {m n : Nat} (c : Vec n) (x : Vec m)
     (i : Fin m) (j : Fin n) :
     pdiv (fun _ : Vec m => c) x i j = 0
 
+/-- **Partial derivative of a gather/reindex function.**
+
+    For any index map `σ : Fin b → Fin a`, the function
+    `fun y => fun k => y (σ k)` gathers components of `y` at positions
+    given by σ. Its Jacobian is sparse: ∂y_{σ(k)}/∂y_i = δ_{i, σ(k)}.
+
+    Subsumes `pdiv_id` (set a = b, σ = id). Covers transpose, flatten,
+    unflatten, slicing, any permutation.
+    (Mathlib equivalent: derivative of a linear projection map via
+    `ContinuousLinearMap.fderiv`.) -/
+axiom pdiv_reindex {a b : Nat} (σ : Fin b → Fin a) (x : Vec a)
+    (i : Fin a) (j : Fin b) :
+    pdiv (fun y : Vec a => fun k : Fin b => y (σ k)) x i j =
+    if i = σ j then 1 else 0
+
+/-- **Finset-sum rule for `pdiv`** — theorem, derived from `pdiv_add`
+    and `pdiv_const` by induction on the Finset. Linearity of the
+    derivative extended to arbitrary finite sums. -/
+theorem pdiv_finset_sum {m n : Nat} {α : Type*} [DecidableEq α]
+    (S : Finset α) (f : α → Vec m → Vec n) (x : Vec m)
+    (i : Fin m) (j : Fin n) :
+    pdiv (fun y k => ∑ s ∈ S, f s y k) x i j =
+    ∑ s ∈ S, pdiv (f s) x i j := by
+  induction S using Finset.induction_on with
+  | empty =>
+    simp only [Finset.sum_empty]
+    exact pdiv_const (fun _ : Fin n => (0 : ℝ)) x i j
+  | @insert a T ha ih =>
+    have heq :
+        (fun (y : Vec m) (k : Fin n) => ∑ s ∈ insert a T, f s y k) =
+        (fun y k => f a y k + (fun y' k' => ∑ s ∈ T, f s y' k') y k) := by
+      funext y k
+      rw [Finset.sum_insert ha]
+    rw [heq, pdiv_add, ih, Finset.sum_insert ha]
+
 -- ════════════════════════════════════════════════════════════════
 -- § VJP Framework
 -- ════════════════════════════════════════════════════════════════
@@ -446,11 +481,43 @@ theorem pdivMat_scalarScale {m n : Nat} (s : ℝ) (A : Mat m n)
       exact ⟨(Prod.mk.inj this).1, (Prod.mk.inj this).2⟩
     rw [if_neg hij, if_neg hne]
 
-/-- **Transpose Jacobian**: `∂A^T_{kl} / ∂A_{ij} = δ_{l=i, k=j}`. -/
-axiom pdivMat_transpose {m n : Nat} (A : Mat m n)
+/-- **Transpose Jacobian** — theorem, derived from `pdiv_reindex` via
+    the flatten bijection.  `∂A^T_{kl} / ∂A_{ij} = δ_{l=i, k=j}`. -/
+theorem pdivMat_transpose {m n : Nat} (A : Mat m n)
     (i : Fin m) (j : Fin n) (k : Fin n) (l : Fin m) :
     pdivMat (fun M : Mat m n => Mat.transpose M) A i j k l =
-    if j = k ∧ i = l then 1 else 0
+    if j = k ∧ i = l then 1 else 0 := by
+  unfold pdivMat
+  -- Step 1: flatten(transpose(unflatten v)) is a gather:
+  --   at output idx, returns v at the index obtained by swapping components.
+  have h_reduces :
+      (fun v : Vec (m * n) =>
+        Mat.flatten ((fun M : Mat m n => Mat.transpose M) (Mat.unflatten v))) =
+      (fun v : Vec (m * n) => fun idx : Fin (n * m) =>
+        v (finProdFinEquiv
+              ((finProdFinEquiv.symm idx).2, (finProdFinEquiv.symm idx).1))) := by
+    funext v idx
+    show Mat.transpose (Mat.unflatten v)
+           (finProdFinEquiv.symm idx).1 (finProdFinEquiv.symm idx).2 = _
+    unfold Mat.transpose Mat.unflatten
+    rfl
+  rw [h_reduces, pdiv_reindex]
+  -- Step 2: collapse the index condition.
+  -- Goal: (if fPF(i,j) = σ(fPF(k,l)) then 1 else 0) = (if j = k ∧ i = l then 1 else 0)
+  -- where σ(idx) = fPF((fPF.symm idx).2, (fPF.symm idx).1).
+  -- At fPF(k,l): σ(fPF(k,l)) = fPF(l, k).
+  -- So condition: fPF(i,j) = fPF(l, k) ⟺ (i, j) = (l, k) ⟺ i = l ∧ j = k.
+  simp only [Equiv.symm_apply_apply]
+  by_cases h : j = k ∧ i = l
+  · obtain ⟨hjk, hil⟩ := h
+    subst hjk; subst hil
+    simp
+  · have hne : finProdFinEquiv (i, j) ≠ finProdFinEquiv (l, k) := by
+      intro heq
+      apply h
+      have := finProdFinEquiv.injective heq
+      exact ⟨(Prod.mk.inj this).2, (Prod.mk.inj this).1⟩
+    rw [if_neg hne, if_neg h]
 
 /-- **Matmul with right factor varying, left factor fixed** — proved.
 
