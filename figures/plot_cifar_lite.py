@@ -9,9 +9,10 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-LOG_NOBN = "ablation_cifar-lite-nobn-sgd002.log"
-LOG_BN   = "ablation_cifar-lite-bn-sgd002.log"
-OUT      = "figures/cifar_lite_bn_vs_nobn.png"
+REPO = Path(__file__).resolve().parent.parent
+LOG_NOBN = REPO / "ablation_cifar-lite-nobn-sgd002.log"
+LOG_BN   = REPO / "ablation_cifar-lite-bn-sgd002.log"
+OUT      = REPO / "figures" / "cifar_lite_bn_vs_nobn.png"
 
 LOSS_RE = re.compile(r"^Epoch\s+(\d+)/\d+: loss=([\d.]+)")
 VAL_RE  = re.compile(r"val accuracy.*=\s*([\d.]+)%")
