@@ -247,19 +247,89 @@ layers, two matmuls, one row-softmax, one scale, and a three-way
 fan-in. Every piece has been proved. The composition is mechanical.
 -/
 
-/-- We axiomatize `sdpa_has_vjp` to keep this file readable. The content
-    is "compose the four backwards above via chain rule + biPath; nothing
-    new." A mechanical rendering in Lean would thread `vjp_comp` four
-    times and `biPath_has_vjp` twice, with one intermediate per step.
-    That's ~100 lines of plumbing that adds no insight beyond what the
-    derivation above already shows. -/
-axiom sdpa_has_vjp (n d : Nat) :
-    -- A triple of backward functions, one per input (Q, K, V):
-    --   each takes the forward Q, K, V and the output cotangent d_out,
-    --   and returns the corresponding input cotangent.
-    (Mat n d → Mat n d → Mat n d → Mat n d → Mat n d) ×   -- d_Q
-    (Mat n d → Mat n d → Mat n d → Mat n d → Mat n d) ×   -- d_K
-    (Mat n d → Mat n d → Mat n d → Mat n d → Mat n d)     -- d_V
+/-! ### The backward, concretely
+
+Previously this section ended with a single `axiom sdpa_has_vjp` whose
+type was just `(... functions) × (... functions) × (... functions)`.
+That's **vacuous as a correctness claim** — a triple of zero functions
+satisfies it. Phase 1 replaces that with:
+
+1. **Concrete definitions** of `sdpa_back_Q`, `sdpa_back_K`, `sdpa_back_V`
+   transcribed from the step-by-step derivation above.
+2. **Honest correctness axioms** stated in terms of `pdivMat` (the
+   matrix-level partial derivative primitive from `Tensor.lean`).
+
+The correctness axioms are **still axioms** — proving them requires the
+matrix-level VJP composition framework (Phase 2). But now they *say*
+something: each backward equals the pdivMat-contracted cotangent, which
+is the definition of being a correct VJP.
+
+The concrete formulas here are numerically gradient-checked in
+`check_axioms.py` (`test_sdpa_back_Q/K/V`), so the axioms are credible
+up to floating-point precision even before the formal proof lands.
+-/
+
+/-- `1 / sqrt(d)`, the SDPA scale factor. -/
+noncomputable def sdpa_scale (d : Nat) : ℝ := 1 / Real.sqrt (↑d)
+
+/-- Softmax-weights under the SDPA scale, reused by all three backwards. -/
+noncomputable def sdpa_weights (n d : Nat) (Q K : Mat n d) : Mat n n :=
+  let scores : Mat n n := Mat.mul Q (Mat.transpose K)
+  let scaled : Mat n n := fun i j => sdpa_scale d * scores i j
+  rowSoftmax scaled
+
+/-- Gradient flowing into `weights` from the final matmul `out = weights · V`. -/
+noncomputable def sdpa_dWeights {n d : Nat} (V dOut : Mat n d) : Mat n n :=
+  Mat.mul dOut (Mat.transpose V)
+
+/-- Per-row softmax VJP: `p_i * (dw_i - <p_i, dw_i>)`. -/
+noncomputable def sdpa_dScaled (n d : Nat) (Q K V dOut : Mat n d) : Mat n n :=
+  let p : Mat n n := sdpa_weights n d Q K
+  let dw : Mat n n := sdpa_dWeights V dOut
+  fun i j =>
+    let s : ℝ := ∑ k : Fin n, p i k * dw i k
+    p i j * (dw i j - s)
+
+/-- Gradient w.r.t. the pre-softmax scores, after undoing the `/ sqrt(d)` scale. -/
+noncomputable def sdpa_dScores (n d : Nat) (Q K V dOut : Mat n d) : Mat n n :=
+  fun i j => sdpa_scale d * sdpa_dScaled n d Q K V dOut i j
+
+/-- **Backward w.r.t. Q**: `dQ = dScores · K`. -/
+noncomputable def sdpa_back_Q (n d : Nat) (Q K V dOut : Mat n d) : Mat n d :=
+  Mat.mul (sdpa_dScores n d Q K V dOut) K
+
+/-- **Backward w.r.t. K**: `dK = dScores^T · Q`. -/
+noncomputable def sdpa_back_K (n d : Nat) (Q K V dOut : Mat n d) : Mat n d :=
+  Mat.mul (Mat.transpose (sdpa_dScores n d Q K V dOut)) Q
+
+/-- **Backward w.r.t. V**: `dV = weights^T · dOut`. (V does not appear on the
+    RHS: `V`'s gradient flows only through the final matmul, not through
+    `weights`.) -/
+noncomputable def sdpa_back_V (n d : Nat) (Q K _V dOut : Mat n d) : Mat n d :=
+  Mat.mul (Mat.transpose (sdpa_weights n d Q K)) dOut
+
+/-- **Correctness of `sdpa_back_Q`.** The backward w.r.t. Q equals the
+    contraction of `pdivMat (fun Q' => sdpa n d Q' K V) Q` against `dOut`.
+    Axiomatized pending Phase 2. Numerically gradient-checked. -/
+axiom sdpa_back_Q_correct (n d : Nat) (Q K V dOut : Mat n d)
+    (i : Fin n) (j : Fin d) :
+    sdpa_back_Q n d Q K V dOut i j =
+    ∑ k : Fin n, ∑ l : Fin d,
+      pdivMat (fun Q' => sdpa n d Q' K V) Q i j k l * dOut k l
+
+/-- **Correctness of `sdpa_back_K`.** Axiomatized pending Phase 2. -/
+axiom sdpa_back_K_correct (n d : Nat) (Q K V dOut : Mat n d)
+    (i : Fin n) (j : Fin d) :
+    sdpa_back_K n d Q K V dOut i j =
+    ∑ k : Fin n, ∑ l : Fin d,
+      pdivMat (fun K' => sdpa n d Q K' V) K i j k l * dOut k l
+
+/-- **Correctness of `sdpa_back_V`.** Axiomatized pending Phase 2. -/
+axiom sdpa_back_V_correct (n d : Nat) (Q K V dOut : Mat n d)
+    (i : Fin n) (j : Fin d) :
+    sdpa_back_V n d Q K V dOut i j =
+    ∑ k : Fin n, ∑ l : Fin d,
+      pdivMat (fun V' => sdpa n d Q K V') V i j k l * dOut k l
 
 -- ════════════════════════════════════════════════════════════════
 -- § 3. Multi-Head wrapping
@@ -290,11 +360,12 @@ their VJPs are independent (like a batch dimension).
 If you wanted to prove `mhsa_has_vjp` in the framework, you'd:
 - Define reshape/transpose as functions with trivial VJPs (permute
   indices -> VJP is the inverse permutation)
-- Apply `sdpa_has_vjp` per head (parallel over a new "head" axis)
+- Apply the SDPA backward trio (`sdpa_back_{Q,K,V}` + their
+  `*_correct` axioms) per head (parallel over a new "head" axis)
 - Compose with the output projection via `dense_has_vjp`
 
-All mechanical. The insight is already captured in `sdpa_has_vjp`
-above; multi-head is an orchestration layer. -/
+All mechanical. The insight is already captured in the SDPA backward
+trio above; multi-head is an orchestration layer. -/
 
 -- ════════════════════════════════════════════════════════════════
 -- § 4. Transformer Block
@@ -315,7 +386,7 @@ where `MLP` is `Dense -> GELU -> Dense`.
 
 Every piece has a `HasVJP` in the book:
 - `LN1`, `LN2` — `layerNorm_has_vjp` (`LayerNorm.lean`)
-- `MHSA` — `sdpa_has_vjp` + multi-head wrapping (this file)
+- `MHSA` — `sdpa_back_{Q,K,V}` + multi-head wrapping (this file)
 - `MLP` — `dense_has_vjp` composed with `gelu_has_vjp` composed with `dense_has_vjp` (via `vjp_comp`)
 - `+` residual connections — `biPath_has_vjp` with identity (`Residual.lean`)
 
@@ -345,7 +416,12 @@ zoo. Everything else is orchestration.
 - Depthwise conv (`Depthwise.lean`)
 - Squeeze-and-Excitation / elementwise product VJP (`SE.lean`)
 - LayerNorm, GELU (`LayerNorm.lean`)
-- Standalone softmax VJP, scaled dot-product attention (this file)
+- Standalone softmax VJP (this file)
+
+**Stated concretely, correctness axiomatized (Phase 2 target):**
+- Scaled dot-product attention backwards `sdpa_back_{Q,K,V}` — the
+  formulas are written out and numerically gradient-checked;
+  formal correctness awaits the matrix-level VJP framework.
 
 **Three calculus axioms do all the structural work:**
 

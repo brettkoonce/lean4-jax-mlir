@@ -357,6 +357,106 @@ def test_depthwise_input_grad():
     return err < TOL
 
 # ════════════════════════════════════════════════════════════════
+# SDPA backwards: sdpa_back_Q / sdpa_back_K / sdpa_back_V
+#
+# These mirror the concrete definitions in Attention.lean. We check
+# each of dQ, dK, dV against finite-difference Jacobians of
+#     sdpa(Q, K, V) = softmax_row(Q K^T / sqrt(d)) V
+# contracted with a random dOut.
+# ════════════════════════════════════════════════════════════════
+def _sdpa_forward(Q, K, V):
+    """Scaled dot-product attention for a single sequence / head."""
+    n, d = Q.shape
+    scale = 1.0 / np.sqrt(d)
+    scores = Q @ K.T                  # (n, n)
+    scaled = scale * scores
+    # Stable row softmax
+    scaled = scaled - scaled.max(axis=1, keepdims=True)
+    e = np.exp(scaled)
+    weights = e / e.sum(axis=1, keepdims=True)  # (n, n)
+    return weights @ V                # (n, d)
+
+def _sdpa_back_Q(Q, K, V, dOut):
+    n, d = Q.shape
+    scale = 1.0 / np.sqrt(d)
+    scores = Q @ K.T
+    scaled_stable = scale * scores
+    scaled_stable = scaled_stable - scaled_stable.max(axis=1, keepdims=True)
+    e = np.exp(scaled_stable)
+    weights = e / e.sum(axis=1, keepdims=True)
+    dWeights = dOut @ V.T                         # (n, n)
+    # Per-row softmax VJP: p_i * (dw_i - <p_i, dw_i>)
+    s = (weights * dWeights).sum(axis=1, keepdims=True)
+    dScaled = weights * (dWeights - s)
+    dScores = scale * dScaled
+    return dScores @ K
+
+def _sdpa_back_K(Q, K, V, dOut):
+    n, d = Q.shape
+    scale = 1.0 / np.sqrt(d)
+    scores = Q @ K.T
+    scaled_stable = scale * scores
+    scaled_stable = scaled_stable - scaled_stable.max(axis=1, keepdims=True)
+    e = np.exp(scaled_stable)
+    weights = e / e.sum(axis=1, keepdims=True)
+    dWeights = dOut @ V.T
+    s = (weights * dWeights).sum(axis=1, keepdims=True)
+    dScaled = weights * (dWeights - s)
+    dScores = scale * dScaled
+    return dScores.T @ Q
+
+def _sdpa_back_V(Q, K, V, dOut):
+    n, d = Q.shape
+    scale = 1.0 / np.sqrt(d)
+    scores = Q @ K.T
+    scaled_stable = scale * scores
+    scaled_stable = scaled_stable - scaled_stable.max(axis=1, keepdims=True)
+    e = np.exp(scaled_stable)
+    weights = e / e.sum(axis=1, keepdims=True)
+    return weights.T @ dOut
+
+def _sdpa_fd_grad(var, Q, K, V, dOut):
+    """Finite-difference grad of <sdpa(Q,K,V), dOut> w.r.t. `var` in {Q, K, V}."""
+    assert var in ("Q", "K", "V")
+    base = {"Q": Q, "K": K, "V": V}[var]
+    g = np.zeros_like(base)
+    it = np.nditer(base, flags=["multi_index"])
+    while not it.finished:
+        idx = it.multi_index
+        saved = base[idx]
+        base[idx] = saved + EPS
+        fp = np.sum(_sdpa_forward(Q, K, V) * dOut)
+        base[idx] = saved - EPS
+        fm = np.sum(_sdpa_forward(Q, K, V) * dOut)
+        base[idx] = saved
+        g[idx] = (fp - fm) / (2 * EPS)
+        it.iternext()
+    return g
+
+def _test_sdpa_back(var, n=4, d=3):
+    Q = np.random.randn(n, d)
+    K = np.random.randn(n, d)
+    V = np.random.randn(n, d)
+    dOut = np.random.randn(n, d)
+    fd = _sdpa_fd_grad(var, Q, K, V, dOut)
+    claimed = {
+        "Q": _sdpa_back_Q(Q, K, V, dOut),
+        "K": _sdpa_back_K(Q, K, V, dOut),
+        "V": _sdpa_back_V(Q, K, V, dOut),
+    }[var]
+    err = np.max(np.abs(fd - claimed))
+    status = "PASS" if err < TOL else "FAIL"
+    print(f"  {status}: {'sdpa_back_' + var:30s} max_err={err:.2e}")
+    if err >= TOL:
+        idx = np.unravel_index(np.argmax(np.abs(fd - claimed)), fd.shape)
+        print(f"         worst at {idx}: fd={fd[idx]:.8f} claimed={claimed[idx]:.8f}")
+    return err < TOL
+
+def test_sdpa_back_Q(): return _test_sdpa_back("Q")
+def test_sdpa_back_K(): return _test_sdpa_back("K")
+def test_sdpa_back_V(): return _test_sdpa_back("V")
+
+# ════════════════════════════════════════════════════════════════
 # GELU: diagonal Jacobian
 # ════════════════════════════════════════════════════════════════
 def test_gelu():
@@ -389,6 +489,9 @@ if __name__ == "__main__":
     results.append(("BatchNorm",    "pdiv_bnNormalize",     test_bn_normalize()))
     results.append(("BatchNorm",    "pdiv_bnAffine",        test_bn_affine()))
     results.append(("Attention",    "pdiv_softmax",         test_softmax()))
+    results.append(("Attention",    "sdpa_back_Q",          test_sdpa_back_Q()))
+    results.append(("Attention",    "sdpa_back_K",          test_sdpa_back_K()))
+    results.append(("Attention",    "sdpa_back_V",          test_sdpa_back_V()))
     results.append(("Depthwise",    "depthwise_input_grad", test_depthwise_input_grad()))
     try:
         results.append(("LayerNorm", "pdiv_gelu",           test_gelu()))

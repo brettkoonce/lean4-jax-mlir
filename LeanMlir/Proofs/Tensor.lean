@@ -133,6 +133,19 @@ def identity_has_vjp (n : Nat) : HasVJP (fun (x : Vec n) => x) where
     simp [Finset.mem_univ]
 
 -- ════════════════════════════════════════════════════════════════
+-- § Matrix-level partial derivative
+-- ════════════════════════════════════════════════════════════════
+
+/-! `pdivMat` is the matrix analogue of `pdiv`: the partial derivative of a
+matrix-valued function of a matrix. Introduced here (Phase 1) purely to give
+multi-matrix-input functions like SDPA a way to *state* correctness claims.
+The full composition framework (chain rule / sum rule / `HasVJPMat`) is
+Phase 2 work — this minimal axiom is enough to stop using a vacuous
+type-only axiom for `sdpa`. -/
+axiom pdivMat {a b c d : Nat} (f : Mat a b → Mat c d) (A : Mat a b)
+    (i : Fin a) (j : Fin b) (k : Fin c) (l : Fin d) : ℝ
+
+-- ════════════════════════════════════════════════════════════════
 -- § 3D Tensor VJP Framework (for CNN / Depthwise)
 -- ════════════════════════════════════════════════════════════════
 

@@ -40,9 +40,9 @@ Tensor.lean                    ← axioms + VJP framework
 
 ## Axioms
 
-All 26 axiom declarations across the proof suite, grouped by file:
+All axiom declarations across the proof suite, grouped by file:
 
-**Tensor.lean** — calculus foundations:
+**Tensor.lean** — calculus foundations (1D `Vec`, 2D `Mat`, 3D `Tensor3`):
 | Axiom | What it says |
 |-------|-------------|
 | `pdiv` | Partial derivative function (existence) |
@@ -51,6 +51,11 @@ All 26 axiom declarations across the proof suite, grouped by file:
 | `pdiv_comp` | Chain rule |
 | `pdiv_add` | Sum rule |
 | `pdiv_mul` | Product rule |
+| `pdivMat` | Matrix-level partial derivative (for multi-matrix-input fns) |
+| `pdiv3` | 3D-tensor partial derivative |
+| `pdiv3_comp` | 3D chain rule |
+| `pdiv3_id` | 3D identity Jacobian |
+| `pdiv3_add` | 3D sum rule |
 
 **MLP.lean** — dense layers:
 | Axiom | What it says |
@@ -68,6 +73,8 @@ All 26 axiom declarations across the proof suite, grouped by file:
 | `maxPool2` | MaxPool forward (function signature) |
 | `maxPool2_input_grad` | Route gradient to argmax positions |
 | `flatten` / `unflatten` | Reshape between 3D and 1D |
+| `pdiv3_conv2d_vjp` | Conv2d 3D-tensor VJP statement |
+| `pdiv3_maxPool2_vjp` | MaxPool2 3D-tensor VJP statement |
 
 **BatchNorm.lean** — the hard one:
 | Axiom | What it says |
@@ -81,6 +88,7 @@ All 26 axiom declarations across the proof suite, grouped by file:
 | `depthwiseConv2d` | Depthwise conv forward |
 | `depthwiseConv2d_input_grad` | dx per-channel |
 | `depthwiseConv2d_weight_grad` | dW per-channel |
+| `pdiv3_depthwise_vjp` | Depthwise 3D-tensor VJP statement |
 
 **LayerNorm.lean** — layer norm and GELU:
 | Axiom | What it says |
@@ -93,10 +101,23 @@ All 26 axiom declarations across the proof suite, grouped by file:
 | Axiom | What it says |
 |-------|-------------|
 | `pdiv_softmax` | Softmax Jacobian (rank-1 correction) |
-| `sdpa_has_vjp` | Scaled dot-product attention VJP |
+| `sdpa_back_Q_correct` | `sdpa_back_Q` equals the `pdivMat`-contracted cotangent |
+| `sdpa_back_K_correct` | `sdpa_back_K` equals the `pdivMat`-contracted cotangent |
+| `sdpa_back_V_correct` | `sdpa_back_V` equals the `pdivMat`-contracted cotangent |
+
+> The three `sdpa_back_*_correct` axioms replace a previous
+> `sdpa_has_vjp` axiom whose type asserted only "a triple of functions
+> of some shape exists" (trivially true). The new axioms are *honest*
+> correctness claims — each states that the concrete backward
+> formula in `Attention.lean` equals the Jacobian contraction. A full
+> proof awaits the matrix-level VJP framework (Phase 2). Until then,
+> each formula is numerically gradient-checked in `check_axioms.py`.
 
 Plus three Lean core axioms (`propext`, `Classical.choice`, `Quot.sound`)
 present in every nontrivial Lean program.
+
+Total: 11 (Tensor) + 3 (MLP) + 9 (CNN) + 2 (BatchNorm) + 4 (Depthwise)
++ 3 (LayerNorm) + 4 (Attention) = **36 axioms**.
 
 Everything else — every `HasVJP` instance, every composition,
 every correctness theorem — is proved from these axioms by
