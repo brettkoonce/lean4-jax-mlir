@@ -139,4 +139,11 @@ lean_exe «test-smoke-trainers» where
 lean_exe «test-codegen-ts» where
   root := `TestCodegenTrainStep
 
+-- ════════════════════════════════════════════════════════════════
+-- Bestiary: architecture-only NetSpec examples (print, no training)
+-- ════════════════════════════════════════════════════════════════
+
+lean_exe «bestiary-alphazero» where
+  root := `Bestiary.AlphaZero
+
 require checkdecls from git "https://github.com/PatrickMassot/checkdecls.git"
