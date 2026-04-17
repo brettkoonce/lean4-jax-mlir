@@ -153,6 +153,30 @@ def Layer.nParams : Layer → Nat
                      + (9 * mid + 2 * mid)
                      + ((mid * oc) / g + 2 * oc)
       firstUnit + (nUnits - 1) * restUnit
+  | .evoformerBlock msaChannels pairChannels nBlocks =>
+      -- Per-block breakdown (approx, matching AlphaFold 2 supplementary):
+      --   MSA row-attn w/ pair bias:   ~ 4·cm²          (Q/K/V/O on MSA channels)
+      --   MSA col-attn:                ~ 4·cm²
+      --   MSA transition (4×):         ~ 8·cm²          (two denses)
+      --   Outer product mean → pair:   ~ cm²·cz / 32    (bottleneck to pair)
+      --   Triangle multiplicative ×2:  ~ 4·cz²          (outgoing + incoming)
+      --   Triangle attention      ×2:  ~ 4·cz²          (starting + ending node)
+      --   Pair transition (4×):        ~ 8·cz²
+      let cm := msaChannels
+      let cz := pairChannels
+      let perBlock := 16 * cm * cm
+                    + cm * cm * cz / 32
+                    + 16 * cz * cz
+      nBlocks * perBlock
+  | .structureModule singleChannels pairChannels nBlocks =>
+      -- Shared-weights recurrent IPA. Per (single) round: IPA attention
+      -- (~ 4·cs² + cs·cz/4 for the pair-bias path) + backbone update
+      -- (~ cs²) + per-residue χ-angle head (~ cs² for MLPs).
+      -- Weights SHARED across `nBlocks` rounds, so params don't multiply.
+      let cs := singleChannels
+      let cz := pairChannels
+      let _ := nBlocks  -- recurrence, not stacking
+      6 * cs * cs + cs * cz / 4
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
@@ -224,7 +248,9 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .unetUp ic oc              => s!"UNetUp({ic}→{oc})"
     | .transformerDecoder dim h _ n nq => s!"Dec{n}x[{h}h,{dim}],{nq}q"
     | .detrHeads dim c           => s!"DETR-heads({dim}→cls{c+1}+box4)"
-    | .shuffleBlock ic oc g n    => s!"Shuffle{n}({ic}→{oc},g{g})")
+    | .shuffleBlock ic oc g n    => s!"Shuffle{n}({ic}→{oc},g{g})"
+    | .evoformerBlock cm cz n    => s!"Evoformer{n}(msa={cm},pair={cz})"
+    | .structureModule cs cz n   => s!"StructMod{n}(s={cs},z={cz})")
 
 -- ===========================================================================
 -- Validation: catch channel/dimension mismatches at `lake build` time
@@ -254,6 +280,8 @@ def Layer.outChannels : Layer → Nat
   | .transformerDecoder dim _ _ _ _ => dim
   | .detrHeads _ nClasses           => nClasses + 1  -- class-head output width (informational)
   | .shuffleBlock _ oc _ _          => oc
+  | .evoformerBlock msaCh _ _       => msaCh  -- MSA channels as the "main" dim
+  | .structureModule sCh _ _        => sCh    -- single-repr channels
   | _                               => 0  -- pool/flatten/GAP: pass-through
 
 /-- Input channels expected by a layer. Returns 0 for layers that accept any input. -/
@@ -280,6 +308,8 @@ def Layer.inChannels : Layer → Nat
   | .transformerDecoder dim _ _ _ _ => dim
   | .detrHeads dim _                => dim
   | .shuffleBlock ic _ _ _          => ic
+  | .evoformerBlock msaCh _ _       => msaCh
+  | .structureModule sCh _ _        => sCh
   | _                               => 0  -- pool/flatten/GAP: accept anything
 
 /-- Validate that channel dimensions chain correctly through the spec.
@@ -315,6 +345,9 @@ def NetSpec.validate (s : NetSpec) : Option String := Id.run do
         afterGAP := false; afterFlatten := false; afterTransformer := false
     -- Transformer decoder: same dim in / dim out, same afterTransformer treatment.
     | .transformerDecoder .. => afterTransformer := true
+    -- Evoformer / Structure Module: abstract "channels" carried through.
+    | .evoformerBlock .. => afterTransformer := true
+    | .structureModule .. => afterTransformer := true
     | _ =>
       let oc := l.outChannels
       if oc > 0 then

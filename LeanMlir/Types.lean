@@ -65,6 +65,18 @@ inductive Layer where
   -- shuffle → 3×3 depthwise → 1×1 grouped conv, with `groups` channel
   -- partitions driving the grouped convs.
   | shuffleBlock (ic oc groups nUnits : Nat)
+  -- AlphaFold-2 Evoformer block stack. Operates on a DUAL representation
+  -- (MSA: s × r × msaChannels, pair: r × r × pairChannels) and updates
+  -- both jointly. Per-block: MSA row attention with pair bias + MSA col
+  -- attention + MSA transition + outer-product-mean → pair + triangle
+  -- multiplicative update (out/in) + triangle attention (start/end) +
+  -- pair transition. All bundled into one primitive here since the dual
+  -- representation doesn't fit a linear NetSpec naturally.
+  | evoformerBlock (msaChannels pairChannels nBlocks : Nat)
+  -- AlphaFold-2 Structure Module: `nBlocks` rounds of Invariant Point
+  -- Attention (IPA) over residues + backbone frame updates + side-chain
+  -- χ angle prediction. Shared weights across blocks (recurrent).
+  | structureModule (singleChannels pairChannels nBlocks : Nat)
 deriving Repr
 
 structure NetSpec where

@@ -17,6 +17,7 @@ like in ~20 lines of Lean."
 | `DETR.lean`      | DETR                      | R50 / R101 / tiny | Object detection as set prediction; learned queries + cross-attention |
 | `YOLO.lean`      | YOLOv1                    | full / fast / tiny | Old-school one-shot detection; conv stack + 2 FCs, no new primitives |
 | `ShuffleNet.lean`| ShuffleNet v1             | 0.5× / 1× / 2× / tiny | Mobile CNN: grouped 1×1 convs + channel shuffle |
+| `Evoformer.lean` | AlphaFold 2 Evoformer     | full / mini / tiny | Dual-representation (MSA + pair) via triangle updates |
 
 ## Adding a new entry
 
