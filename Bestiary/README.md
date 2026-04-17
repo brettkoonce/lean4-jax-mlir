@@ -75,6 +75,7 @@ procedure, and the bestiary entry exists to make that point.
 | File | Architecture | Variants | Notes |
 |------|--------------|----------|-------|
 | `Mamba.lean`     | Mamba (selective SSM)     | 130M / 370M / 790M / tiny | Language model, linear-time alternative to attention |
+| `BERT.lean`      | BERT / RoBERTa            | base / large × 2 + tiny | Encoder-only transformer; RoBERTa = BERT architecturally |
 | `WaveNet.lean`   | WaveNet                   | speech / 3-stack / music / tiny | Dilated causal convs for audio; exponential receptive field |
 | `NeRF.lean`      | NeRF                      | canonical / fast / tiny | 3D scene as an MLP; the magic is in positional encoding |
 | `CLIP.lean`      | CLIP                      | RN50 / ViT-B/32 / ViT-L/14 / tiny | Dual encoder + contrastive; zero new primitives |
