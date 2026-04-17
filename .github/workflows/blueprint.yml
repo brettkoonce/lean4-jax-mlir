@@ -78,13 +78,14 @@ jobs:
         run: |
           pip install leanblueprint
 
+      - name: Build blueprint web version
+        run: |
+          # Generates blueprint/lean_decls as a side effect (used by checkdecls).
+          leanblueprint web
+
       - name: Check Lean declarations referenced in blueprint
         run: |
           leanblueprint checkdecls
-
-      - name: Build blueprint web version
-        run: |
-          leanblueprint web
 
       - name: Build blueprint PDF
         run: |
