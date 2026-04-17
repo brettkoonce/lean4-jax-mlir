@@ -116,6 +116,18 @@ inductive Layer where
   --   encodedDirDim — dim of γ(d), typically 24 (=2·2·6)  [view direction]
   --   hiddenDim     — MLP width (paper: 256)
   | nerfMLP (encodedPosDim encodedDirDim hiddenDim : Nat)
+  -- Darknet residual stack (Redmon & Farhadi 2018, YOLOv3). `nBlocks`
+  -- residual blocks at fixed `channels`, each being: 1×1 conv (c → c/2)
+  -- + 3×3 conv (c/2 → c) + residual add. No downsample; pair with a
+  -- stride-2 convBn before each stack for the Darknet-53 body.
+  | darknetBlock (channels nBlocks : Nat)
+  -- Cross-Stage Partial block (Wang et al. 2019, used by YOLOv4/v5/v8/v11
+  -- and family). Splits input channels into two halves, processes one
+  -- half through a stack of `nBlocks` bottleneck residual blocks, then
+  -- concatenates with the untouched half and 1×1-projects to `oc`. The
+  -- exact inner block varies across YOLO versions (C3, C2f, C3k2);
+  -- this primitive approximates them all at the same abstraction level.
+  | cspBlock (ic oc nBlocks : Nat)
 deriving Repr
 
 structure NetSpec where

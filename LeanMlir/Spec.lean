@@ -221,22 +221,32 @@ def Layer.nParams : Layer → Nat
       let eP := encodedPosDim
       let eD := encodedDirDim
       let h  := hiddenDim
-      -- Layer 1: γ(x) (eP) → h, with bias
       let l1 := eP * h + h
-      -- Layers 2-4: 3 × (h → h)
       let l2to4 := 3 * (h * h + h)
-      -- Layer 5: (h + eP) → h  [skip-concat with positional encoding]
       let l5 := (h + eP) * h + h
-      -- Layers 6-8: 3 × (h → h)
       let l6to8 := 3 * (h * h + h)
-      -- Density head: h → 1
       let densHead := h * 1 + 1
-      -- Feature projection before direction branch: h → h
       let featProj := h * h + h
-      -- Direction branch: (h + eD) → 128, then 128 → 3
       let dirLayer := (h + eD) * 128 + 128
       let rgbHead  := 128 * 3 + 3
       l1 + l2to4 + l5 + l6to8 + densHead + featProj + dirLayer + rgbHead
+  | .darknetBlock channels nBlocks =>
+      -- Per residual block: 1×1 (c → c/2) + BN + 3×3 (c/2 → c) + BN + residual
+      --   = (c · c/2 + 2·c/2) + (9 · c/2 · c + 2·c)
+      --   = c²/2 + c + 9·c²/2 + 2·c = 5·c² + 3·c
+      let c := channels
+      nBlocks * (5 * c * c + 3 * c)
+  | .cspBlock ic oc nBlocks =>
+      -- Split + process + concat CSP. Approximation:
+      --   Input split: 1×1 (ic → ic/2) + BN, twice (one per branch): 2·(ic²/2 + ic)
+      --   Bottleneck residual × nBlocks on one branch at ic/2 channels:
+      --     each block ≈ 5·(ic/2)² + 3·(ic/2)
+      --   Concat + 1×1 out (ic → oc) + BN: ic·oc + 2·oc
+      let half := Nat.max 1 (ic / 2)
+      let splitPart := 2 * (ic * half + 2 * half)
+      let bottleneckPart := nBlocks * (5 * half * half + 3 * half)
+      let outPart := ic * oc + 2 * oc
+      splitPart + bottleneckPart + outPart
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
@@ -316,7 +326,9 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .convNextDownsample i o    => s!"CNXDown({i}→{o})"
     | .waveNetBlock r s n        => s!"WaveNet{n}(res={r},skip={s})"
     | .positionalEncoding d L    => s!"PE({d}→{d * 2 * L},L={L})"
-    | .nerfMLP eP eD h           => s!"NeRF-MLP(p={eP},d={eD},h={h})")
+    | .nerfMLP eP eD h           => s!"NeRF-MLP(p={eP},d={eD},h={h})"
+    | .darknetBlock c n          => s!"Dark{n}(c={c})"
+    | .cspBlock i o n            => s!"CSP{n}({i}→{o})")
 
 -- ===========================================================================
 -- Validation: catch channel/dimension mismatches at `lake build` time
@@ -354,6 +366,8 @@ def Layer.outChannels : Layer → Nat
   | .waveNetBlock _ skipCh _        => skipCh     -- skip-sum is what flows to the head
   | .positionalEncoding inputDim numFreq => inputDim * 2 * numFreq
   | .nerfMLP _ _ _                  => 4    -- 1-dim density + 3-dim RGB (flattened)
+  | .darknetBlock c _               => c    -- preserves channels
+  | .cspBlock _ oc _                => oc
   | _                               => 0  -- pool/flatten/GAP: pass-through
 
 /-- Input channels expected by a layer. Returns 0 for layers that accept any input. -/
@@ -388,6 +402,8 @@ def Layer.inChannels : Layer → Nat
   | .waveNetBlock residualCh _ _    => residualCh
   | .positionalEncoding inputDim _  => inputDim
   | .nerfMLP encodedPosDim _ _      => encodedPosDim
+  | .darknetBlock c _               => c
+  | .cspBlock ic _ _                => ic
   | _                               => 0  -- pool/flatten/GAP: accept anything
 
 /-- Validate that channel dimensions chain correctly through the spec.

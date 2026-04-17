@@ -841,6 +841,31 @@ goal is pedagogical shape + parameter accounting, not training runs.
   \texttt{nerfMLP (encodedPosDim encodedDirDim hiddenDim : Nat)}.
 \end{definition}
 
+\begin{definition}[Darknet residual block]
+  \label{layer:darknetBlock}
+  \lean{Layer.darknetBlock}
+  \leanok
+  YOLOv3's Darknet-53 residual stack (Redmon \& Farhadi 2018).
+  \texttt{nBlocks} residual blocks at fixed \texttt{channels}, each
+  being 1$\times$1 conv ($c \to c/2$) $+$ 3$\times$3 conv ($c/2 \to c$)
+  $+$ residual add. Lighter than a standard ResNet bottleneck; heavier
+  than a ResNet-18 basic block. Signature:
+  \texttt{darknetBlock (channels nBlocks : Nat)}.
+\end{definition}
+
+\begin{definition}[Cross-Stage Partial block]
+  \label{layer:cspBlock}
+  \lean{Layer.cspBlock}
+  \leanok
+  CSP (Wang et al.\ 2019), used by YOLOv4 onward. Splits input into two
+  halves, processes one half through a stack of residual blocks, then
+  concatenates with the untouched half and 1$\times$1-projects to
+  \texttt{oc}. The specific inner block varies across YOLO versions (C3
+  in v5, C2f in v8, C3k2 in v11); this primitive approximates all three
+  at the same abstraction level. Signature:
+  \texttt{cspBlock (ic oc nBlocks : Nat)}.
+\end{definition}
+
 \section{Bestiary entries}
 \label{sec:bestiary_entries}
 
@@ -873,12 +898,16 @@ plus existing \texttt{bottleneckBlock} (ResNet backbone),
 \texttt{transformerEncoder}. Variants: DETR-R50 (41M, paper-exact),
 DETR-R101 (60M), tiny.
 
-\subsection*{YOLOv1 (\texttt{Bestiary/YOLO.lean})}
-Zero new primitives --- just \texttt{conv2d} + \texttt{maxPool} +
-\texttt{flatten} + \texttt{dense}. The YOLO-ness lives in the loss
-function (grid assignment, IoU weighting) and the output reshape, both
-training-time concerns outside \texttt{NetSpec}. Variants: full (271M,
-paper-exact), fast, tiny.
+\subsection*{YOLO v1/v3/v5/v8/v11 (\texttt{Bestiary/YOLO.lean})}
+v1 uses zero new primitives (\texttt{conv2d} + \texttt{maxPool} +
+\texttt{flatten} + \texttt{dense}; the YOLO-ness lives in the loss and
+output reshape, not the architecture). v3 adds \S~\ref{layer:darknetBlock}
+for the Darknet-53 body. v5/v8/v11 use \S~\ref{layer:cspBlock} for
+their CSPDarknet backbones. Variants: YOLOv1 (271M, paper-exact), fast,
+tiny, YOLOv3 (40M backbone), YOLOv5s/m (3M/8M single-scale), YOLOv8n/s
+(0.7M/2.9M single-scale), YOLOv11n/m (backbone only). Multi-scale FPN
+detection heads don't linearize --- same skip-connection problem as
+UNet; all entries show a single-scale view.
 
 \subsection*{ShuffleNet (\texttt{Bestiary/ShuffleNet.lean})}
 Uses \S~\ref{layer:shuffleBlock}. Variants: ShuffleNet 0.5$\times$ /

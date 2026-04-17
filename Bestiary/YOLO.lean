@@ -1,6 +1,6 @@
 import LeanMlir
 
-/-! # YOLO v1 — Bestiary entry
+/-! # YOLO (v1 / v3 / v5 / v8 / v11) — Bestiary entry
 
 YOLO v1 (Redmon, Divvala, Girshick, Farhadi, 2016 — "You Only Look Once:
 Unified, Real-Time Object Detection") was the paper that reframed
@@ -192,6 +192,187 @@ def tinyYolo : NetSpec where
   ]
 
 -- ════════════════════════════════════════════════════════════════
+-- § YOLOv3 — Darknet-53 backbone + multi-scale FPN
+-- ════════════════════════════════════════════════════════════════
+
+/-! YOLOv3 (Redmon & Farhadi, 2018) made several big changes:
+    * Backbone: **Darknet-53** — 53 conv layers, mostly 1×1 + 3×3 residual
+      blocks at doubling channels. ~40M params on its own.
+    * Multi-scale detection: predicts at three feature-pyramid levels
+      (~13×13, 26×26, 52×52 for a 416 input). Catches small and large
+      objects in one forward pass.
+    * Anchor-based: 3 anchor boxes per grid cell × 3 scales = 9 anchors
+      total, each producing (4 box + 1 obj + 80 class) = 85 outputs for
+      COCO. Each scale's head emits 3 × 85 = 255 channels.
+
+    Our NetSpec shows a single-scale variant for linearity; the
+    multi-scale FPN (upsample + concat with earlier features) doesn't
+    linearize cleanly. Same honest limitation as UNet's skip
+    connections. -/
+def yoloV3 : NetSpec where
+  name := "YOLOv3 (single-scale view)"
+  imageH := 416
+  imageW := 416
+  layers := [
+    .convBn 3 32 3 1 .same,
+    .convBn 32 64 3 2 .same,        -- downsample
+    .darknetBlock 64 1,
+    .convBn 64 128 3 2 .same,
+    .darknetBlock 128 2,
+    .convBn 128 256 3 2 .same,
+    .darknetBlock 256 8,            -- P3 feature (52×52)
+    .convBn 256 512 3 2 .same,
+    .darknetBlock 512 8,            -- P4 feature (26×26)
+    .convBn 512 1024 3 2 .same,
+    .darknetBlock 1024 4,           -- P5 feature (13×13)
+    -- Single-scale head (COCO: 3 anchors × (5 + 80) = 255 channels)
+    .conv2d 1024 255 1 .same .identity
+  ]
+
+-- ════════════════════════════════════════════════════════════════
+-- § YOLOv5 — CSPDarknet backbone, anchor-based, Ultralytics 2020
+-- ════════════════════════════════════════════════════════════════
+
+/-! YOLOv5 (Ultralytics 2020, no paper) swapped in the **CSP block**
+    (Cross-Stage Partial) for the Darknet residual. CSP splits the
+    feature map in half, processes one half through residuals, and
+    concatenates — cuts FLOPs without hurting accuracy.
+
+    Uses SiLU (Swish) activation. PANet neck (bidirectional FPN) between
+    backbone and head. Anchor-based detection at 3 scales, same head
+    format as v3. -/
+def yoloV5s : NetSpec where
+  name := "YOLOv5s (single-scale view)"
+  imageH := 640
+  imageW := 640
+  layers := [
+    .convBn 3 32 6 2 .same,           -- stem
+    .convBn 32 64 3 2 .same,
+    .cspBlock 64 64 1,                -- C3 blocks in v5 terminology
+    .convBn 64 128 3 2 .same,
+    .cspBlock 128 128 2,
+    .convBn 128 256 3 2 .same,
+    .cspBlock 256 256 3,
+    .convBn 256 512 3 2 .same,
+    .cspBlock 512 512 1,
+    .conv2d 512 255 1 .same .identity
+  ]
+
+def yoloV5m : NetSpec where
+  name := "YOLOv5m (single-scale view)"
+  imageH := 640
+  imageW := 640
+  layers := [
+    .convBn 3 48 6 2 .same,
+    .convBn 48 96 3 2 .same,
+    .cspBlock 96 96 2,
+    .convBn 96 192 3 2 .same,
+    .cspBlock 192 192 4,
+    .convBn 192 384 3 2 .same,
+    .cspBlock 384 384 6,
+    .convBn 384 768 3 2 .same,
+    .cspBlock 768 768 2,
+    .conv2d 768 255 1 .same .identity
+  ]
+
+-- ════════════════════════════════════════════════════════════════
+-- § YOLOv8 — anchor-free CSP with C2f blocks, Ultralytics 2023
+-- ════════════════════════════════════════════════════════════════
+
+/-! YOLOv8 (Ultralytics 2023) stayed close to v5 but:
+    * Replaced C3 with **C2f** — a faster CSP variant with more parallel
+      paths. Our `.cspBlock` approximates both.
+    * Went **anchor-free**: no more preset anchor boxes. Each grid cell
+      predicts offsets directly; classification + regression are
+      decoupled heads.
+    * Simpler head: no more `3 × (5 + C)` channels; separate class head
+      (C channels) and box head (4×reg_max channels, where reg_max=16).
+
+    Head output below is a single-scale approximation. -/
+def yoloV8n : NetSpec where
+  name := "YOLOv8n (single-scale view)"
+  imageH := 640
+  imageW := 640
+  layers := [
+    .convBn 3 16 3 2 .same,
+    .convBn 16 32 3 2 .same,
+    .cspBlock 32 32 1,
+    .convBn 32 64 3 2 .same,
+    .cspBlock 64 64 2,
+    .convBn 64 128 3 2 .same,
+    .cspBlock 128 128 2,
+    .convBn 128 256 3 2 .same,
+    .cspBlock 256 256 1,
+    -- anchor-free head: classes(80) + box(4·reg_max=64) = 144 channels
+    .conv2d 256 144 1 .same .identity
+  ]
+
+def yoloV8s : NetSpec where
+  name := "YOLOv8s (single-scale view)"
+  imageH := 640
+  imageW := 640
+  layers := [
+    .convBn 3 32 3 2 .same,
+    .convBn 32 64 3 2 .same,
+    .cspBlock 64 64 1,
+    .convBn 64 128 3 2 .same,
+    .cspBlock 128 128 2,
+    .convBn 128 256 3 2 .same,
+    .cspBlock 256 256 2,
+    .convBn 256 512 3 2 .same,
+    .cspBlock 512 512 1,
+    .conv2d 512 144 1 .same .identity
+  ]
+
+-- ════════════════════════════════════════════════════════════════
+-- § YOLOv11 — lightweight C3k2 + C2PSA attention, Ultralytics 2024
+-- ════════════════════════════════════════════════════════════════
+
+/-! YOLOv11 (Ultralytics 2024) keeps the anchor-free head from v8 but
+    swaps in:
+    * **C3k2** — lighter CSP variant (smaller kernels by default).
+    * **C2PSA** — partial self-attention block added at the deepest
+      stage. Modest accuracy gain, still much cheaper than full
+      attention since it's on the smallest (7×7 or so) feature map.
+
+    Our `.cspBlock` approximates C3k2 (same shape, slightly different
+    FLOP profile). The attention block isn't exposed; at this abstraction
+    level it reads as one more stage of CSP + a final conv. -/
+def yoloV11n : NetSpec where
+  name := "YOLOv11n (single-scale view)"
+  imageH := 640
+  imageW := 640
+  layers := [
+    .convBn 3 16 3 2 .same,
+    .convBn 16 32 3 2 .same,
+    .cspBlock 32 64 1,              -- C3k2 block (input doubles here)
+    .convBn 64 64 3 2 .same,
+    .cspBlock 64 128 2,
+    .convBn 128 128 3 2 .same,
+    .cspBlock 128 128 2,
+    .convBn 128 256 3 2 .same,
+    .cspBlock 256 256 1,            -- C2PSA approximated as one more CSP
+    .conv2d 256 144 1 .same .identity
+  ]
+
+def yoloV11m : NetSpec where
+  name := "YOLOv11m (single-scale view)"
+  imageH := 640
+  imageW := 640
+  layers := [
+    .convBn 3 64 3 2 .same,
+    .convBn 64 128 3 2 .same,
+    .cspBlock 128 256 1,
+    .convBn 256 256 3 2 .same,
+    .cspBlock 256 512 4,
+    .convBn 512 512 3 2 .same,
+    .cspBlock 512 512 4,
+    .convBn 512 512 3 2 .same,
+    .cspBlock 512 512 2,
+    .conv2d 512 144 1 .same .identity
+  ]
+
+-- ════════════════════════════════════════════════════════════════
 -- § Main: print-only summary
 -- ════════════════════════════════════════════════════════════════
 
@@ -209,30 +390,64 @@ private def summarize (spec : NetSpec) : IO Unit := do
 
 def main : IO Unit := do
   IO.println "════════════════════════════════════════════════════════════════"
-  IO.println "  Bestiary — YOLOv1"
+  IO.println "  Bestiary — YOLO (v1 / v3 / v5 / v8 / v11)"
   IO.println "════════════════════════════════════════════════════════════════"
-  IO.println "  Detection as regression. One forward pass → S×S grid of"
-  IO.println "  (box, confidence, class) predictions. The paper that"
-  IO.println "  retired two-stage detectors."
+  IO.println "  Detection as regression. One forward pass → grid of (box,"
+  IO.println "  confidence, class) predictions. The paper that retired"
+  IO.println "  two-stage detectors, then eight years of incremental refinement."
 
+  IO.println ""
+  IO.println "──────────── v1 (2016) ────────────"
   summarize yolo
   summarize fastYolo
   summarize tinyYolo
 
   IO.println ""
+  IO.println "──────────── v3 (2018) — Darknet-53 + multi-scale ────────────"
+  summarize yoloV3
+
+  IO.println ""
+  IO.println "──────────── v5 (2020) — CSPDarknet, anchor-based ────────────"
+  summarize yoloV5s
+  summarize yoloV5m
+
+  IO.println ""
+  IO.println "──────────── v8 (2023) — anchor-free, C2f ────────────"
+  summarize yoloV8n
+  summarize yoloV8s
+
+  IO.println ""
+  IO.println "──────────── v11 (2024) — C3k2 + C2PSA ────────────"
+  summarize yoloV11n
+  summarize yoloV11m
+
+  IO.println ""
   IO.println "────────────────────────────────────────────────────────────────"
   IO.println "  Notes"
   IO.println "────────────────────────────────────────────────────────────────"
-  IO.println "  • No new Layer primitives needed. YOLOv1 is a conv stack +"
-  IO.println "    two FCs; the cleverness is in the LOSS (grid assignment,"
-  IO.println "    responsibility-to-predict, IoU weighting) and the output"
-  IO.println "    reshape — both training-time concerns outside NetSpec."
-  IO.println "  • Paper uses LeakyReLU(0.1); we use ReLU here. Architecture"
-  IO.println "    shape and param count are identical."
-  IO.println "  • The 50176 → 4096 FC layer is the main cost — around 205M"
-  IO.println "    of the ~270M total params. This is why later YOLOs (v2+)"
-  IO.println "    dropped FC layers in favor of convolutional output heads"
-  IO.println "    with anchors."
-  IO.println "  • Stride-2 behavior in some convs is approximated with a"
-  IO.println "    following maxPool-2 since our conv2d primitive is stride-1."
-  IO.println "    Param count is unchanged; output spatial dims are the same."
+  IO.println "  • YOLOv1 uses zero new primitives (conv + FC); v3 adds"
+  IO.println "    `.darknetBlock` (Darknet-53's 1×1+3×3 residual); v5/v8/v11"
+  IO.println "    use `.cspBlock` (Cross-Stage Partial). Every YOLO since v5"
+  IO.println "    is an Ultralytics-released variant of the same CSP +"
+  IO.println "    FPN-neck + detection-head scaffold."
+  IO.println "  • Multi-scale detection (FPN at 3 levels) DOESN'T linearize:"
+  IO.println "    YOLO heads read features from the backbone at three"
+  IO.println "    resolutions and concat upsampled coarser with finer. Same"
+  IO.println "    skip-connection issue as UNet. We show a single-scale view."
+  IO.println "  • v8's anchor-free shift is in the HEAD format (144 channels"
+  IO.println "    = 80 classes + 4·16 distribution-based box regression),"
+  IO.println "    not in the backbone. Backbone-level the v5 → v8 change is"
+  IO.println "    mostly C3 → C2f, which our `.cspBlock` approximates."
+  IO.println "  • v11's C2PSA attention block is the first self-attention"
+  IO.println "    in a mainline YOLO — interesting inflection point. Still"
+  IO.println "    lightweight (applied to smallest feature map only)."
+  IO.println ""
+  IO.println "  • Paper uses LeakyReLU(0.1) throughout the YOLO family; our"
+  IO.println "    Activation enum has {.relu, .relu6, .identity}. Param"
+  IO.println "    count identical; bestiary simplification."
+  IO.println "  • v1's 50176 → 4096 FC alone takes ~205M of the ~270M total."
+  IO.println "    This is why v2+ dropped FCs for convolutional output heads"
+  IO.println "    (first with anchors in v2-v7, then anchor-free from v8)."
+  IO.println "  • Stride-2 convs are approximated with conv+maxPool-2 since"
+  IO.println "    our conv2d is stride-1-only in v1; the convBn primitive"
+  IO.println "    (used from v3 onward) DOES have a stride param."
