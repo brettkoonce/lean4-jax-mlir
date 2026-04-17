@@ -151,9 +151,26 @@ jobs:
             echo "::warning::No PDF found at any expected path; blueprint.pdf will 404."
             find blueprint -name "*.pdf" -maxdepth 3 2>/dev/null || true
           fi
+          # Ship latex diagnostic artifacts so we can curl them from the
+          # deployed Pages site without needing repo-admin log access.
+          mkdir -p public/build-logs
+          cp blueprint/src/print.log  public/build-logs/print.log  2>/dev/null || true
+          cp blueprint/print/print.log public/build-logs/print.log 2>/dev/null || true
+          cp blueprint/src/print.fls  public/build-logs/print.fls  2>/dev/null || true
+          # Snapshot of what showed up where, in one grep-able file.
+          {
+            echo "--- ls blueprint ---"
+            ls -la blueprint 2>/dev/null || true
+            echo "--- ls blueprint/src ---"
+            ls -la blueprint/src 2>/dev/null || true
+            echo "--- ls blueprint/print ---"
+            ls -la blueprint/print 2>/dev/null || true
+            echo "--- find blueprint *.pdf ---"
+            find blueprint -name "*.pdf" -maxdepth 3 2>/dev/null || true
+          } > public/build-logs/filesystem.txt
           # Keep the standalone graphviz DAG as an alt artifact
           cp LeanMlir/Proofs/blueprint.svg public/deps.svg 2>/dev/null || true
-          ls -la public/
+          ls -la public/ public/build-logs/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
