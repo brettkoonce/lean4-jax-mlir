@@ -3,26 +3,22 @@ name: Compile blueprint
 on:
   push:
     branches:
-      - main # Trigger on pushes to the default branch
-  workflow_dispatch:        # Allow manual triggering of the workflow from the GitHub Actions interface
+      - main
+  workflow_dispatch:
 
-# Cancel previous runs if a new commit is pushed to the same PR or branch
 concurrency:
-  group: ${{ github.ref }}  # Group runs by the ref (branch or PR)
-  cancel-in-progress: true  # Cancel any ongoing runs in the same group
+  group: ${{ github.ref }}
+  cancel-in-progress: true
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: read          # Read access to repository contents
-  pages: write            # Write access to GitHub Pages
-  id-token: write         # Write access to ID tokens
-  issues: write           # Write access to issues
-  pull-requests: write    # Write access to pull requests
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
-  build_project:
+  build_blueprint:
     runs-on: ubuntu-latest
-    name: Build project
+    name: Build blueprint + deploy to Pages
     steps:
       - name: Cleanup to free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.0
@@ -36,21 +32,81 @@ jobs:
           swap-storage: false
 
       - name: Checkout project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 0 # Fetch all history for all branches and tags
+          fetch-depth: 0
 
-      - name: Build project
-        uses: leanprover/lean-action@434f25c2f80ded67bba02502ad3a86f25db50709 # 2025-07-02
-        with:
-          build: true
-          lint: false
-          mk_all-check: false
-          # Only the proof library + trainer targets need to build for blueprint.
-          # The MLIR codegen and IREE runtime aren't needed for checkdecls.
+      - name: Install elan (Lean toolchain manager)
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- --default-toolchain none -y
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
-      - name: Compile blueprint and documentation
-        uses: leanprover-community/docgen-action@deed0cdc44dd8e5de07a300773eb751d33e32fc8 # 2025-10-26
+      - name: Fetch Mathlib cache
+        run: |
+          lake exe cache get
+
+      - name: Build proof library
+        run: |
+          # Only the Proofs/ modules need to build for checkdecls; skip trainers
+          # and the big MlirCodegen to keep CI time down.
+          lake build LeanMlir.Proofs.Tensor LeanMlir.Proofs.MLP \
+                     LeanMlir.Proofs.CNN LeanMlir.Proofs.BatchNorm \
+                     LeanMlir.Proofs.Residual LeanMlir.Proofs.Depthwise \
+                     LeanMlir.Proofs.SE LeanMlir.Proofs.LayerNorm \
+                     LeanMlir.Proofs.Attention
+
+      - name: Install system build deps (graphviz + TeX Live)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            graphviz libgraphviz-dev pkg-config \
+            texlive-latex-base texlive-latex-extra texlive-fonts-extra \
+            texlive-xetex texlive-science
+
+      - name: Install leanblueprint
+        run: |
+          pip install leanblueprint
+
+      - name: Check Lean declarations referenced in blueprint
+        run: |
+          leanblueprint checkdecls
+
+      - name: Build blueprint web version
+        run: |
+          leanblueprint web
+
+      - name: Build blueprint PDF
+        run: |
+          leanblueprint pdf || echo "PDF build failed but continuing; web is primary."
+        continue-on-error: true
+
+      - name: Assemble public/ directory for Pages
+        run: |
+          mkdir -p public
+          # Homepage (index.md etc.) rendered as markdown; ship as-is and let
+          # GitHub Pages process it with Jekyll.
+          cp -r home_page/* public/ 2>/dev/null || true
+          # Blueprint web
+          mkdir -p public/blueprint
+          cp -r blueprint/web/* public/blueprint/ 2>/dev/null || true
+          # Blueprint PDF (if built)
+          cp blueprint/print/print.pdf public/blueprint.pdf 2>/dev/null || true
+          # Keep the standalone graphviz DAG as an alt artifact
+          cp LeanMlir/Proofs/blueprint.svg public/deps.svg 2>/dev/null || true
+          ls -la public/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          blueprint: true
-          homepage: home_page
+          path: public
+
+  deploy_pages:
+    needs: build_blueprint
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
