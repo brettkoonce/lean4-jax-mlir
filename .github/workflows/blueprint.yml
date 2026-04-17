@@ -56,11 +56,13 @@ jobs:
           # Otherwise it downloads ~5GB of Mathlib oleans from the Azure cache server.
           lake exe cache get || true
 
-      - name: Build proof library
+      - name: Build Lean library
         run: |
-          # Only the Proofs/ modules need to build for checkdecls; skip trainers
-          # and the big MlirCodegen to keep CI time down.
-          lake build LeanMlir.Proofs.Tensor LeanMlir.Proofs.MLP \
+          # `checkdecls` imports the umbrella `LeanMlir` module, which pulls in
+          # MlirCodegen + Types + IreeRuntime etc. via LeanMlir.lean. Also build
+          # the Proofs submodules explicitly to make sure they're all present.
+          lake build LeanMlir \
+                     LeanMlir.Proofs.Tensor LeanMlir.Proofs.MLP \
                      LeanMlir.Proofs.CNN LeanMlir.Proofs.BatchNorm \
                      LeanMlir.Proofs.Residual LeanMlir.Proofs.Depthwise \
                      LeanMlir.Proofs.SE LeanMlir.Proofs.LayerNorm \
