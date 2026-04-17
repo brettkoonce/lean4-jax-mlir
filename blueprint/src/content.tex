@@ -764,6 +764,21 @@ goal is pedagogical shape + parameter accounting, not training runs.
   \texttt{structureModule (singleChannels pairChannels nBlocks : Nat)}.
 \end{definition}
 
+\begin{definition}[MobileViT block]
+  \label{layer:mobileVitBlock}
+  \lean{Layer.mobileVitBlock}
+  \leanok
+  Hybrid local-conv + patch-level transformer (Mehta \& Rastegari
+  2022). Local 3$\times$3 conv $\to$ 1$\times$1 projection to transformer
+  dim $\to$ unfold into patches $\to$ $L$ transformer blocks across
+  patches $\to$ fold back $\to$ 1$\times$1 projection back $\to$ concat
+  with input $\to$ 3$\times$3 fusion. Signature:
+  \texttt{mobileVitBlock (ic dim heads mlpDim nTxBlocks : Nat)}.
+  The unfold/fold operations are \texttt{pdiv\_reindex}-style shape
+  transformations; all the genuinely new math is already covered by
+  the transformer proof chapter.
+\end{definition}
+
 \section{Bestiary entries}
 \label{sec:bestiary_entries}
 
@@ -820,3 +835,10 @@ dynamics, prediction) reusing \texttt{convBn} + \texttt{residualBlock}
 factoring, not any single layer type. Five \texttt{NetSpec} values per
 variant (rep, dyn body, dyn reward head, pred policy, pred value).
 Variants: Go, Atari (representation only), tiny.
+
+\subsection*{MobileViT (\texttt{Bestiary/MobileViT.lean})}
+Uses \S~\ref{layer:mobileVitBlock} plus existing
+\texttt{invertedResidual} for the MV2 stages. Hybrid mobile backbone:
+MobileNet V2 body with MobileViT blocks replacing some of the deeper
+inverted-residual stages. Variants: MobileViT-S (5.6M, paper-exact),
+XS (2.3M), XXS (1.3M), tiny fixture.

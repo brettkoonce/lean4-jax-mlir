@@ -177,6 +177,20 @@ def Layer.nParams : Layer → Nat
       let cz := pairChannels
       let _ := nBlocks  -- recurrence, not stacking
       6 * cs * cs + cs * cz / 4
+  | .mobileVitBlock ic dim _heads mlpDim nTxBlocks =>
+      -- Local conv 3×3 + BN: 9·ic² + 2·ic
+      -- 1×1 projection in (ic → dim) + BN: ic·dim + 2·dim
+      -- Inner transformer (standard): nTxBlocks × ~(12·dim² + 2·dim·mlp)
+      -- 1×1 projection out (dim → ic) + BN: dim·ic + 2·ic
+      -- Fusion conv 3×3 on concat(ic + ic = 2·ic) → ic + BN: 18·ic² + 2·ic
+      let localConv := 9 * ic * ic + 2 * ic
+      let projIn    := ic * dim + 2 * dim
+      let perTx     := 4 * (dim * dim + dim) + 2 * (dim * mlpDim + mlpDim)
+                     + 4 * dim
+      let txParams  := nTxBlocks * perTx + 2 * dim
+      let projOut   := dim * ic + 2 * ic
+      let fusion    := 18 * ic * ic + 2 * ic
+      localConv + projIn + txParams + projOut + fusion
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
@@ -250,7 +264,8 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .detrHeads dim c           => s!"DETR-heads({dim}→cls{c+1}+box4)"
     | .shuffleBlock ic oc g n    => s!"Shuffle{n}({ic}→{oc},g{g})"
     | .evoformerBlock cm cz n    => s!"Evoformer{n}(msa={cm},pair={cz})"
-    | .structureModule cs cz n   => s!"StructMod{n}(s={cs},z={cz})")
+    | .structureModule cs cz n   => s!"StructMod{n}(s={cs},z={cz})"
+    | .mobileVitBlock ic d h m n => s!"MobileViT(ic={ic},d={d},h={h},mlp={m},L={n})")
 
 -- ===========================================================================
 -- Validation: catch channel/dimension mismatches at `lake build` time
@@ -282,6 +297,7 @@ def Layer.outChannels : Layer → Nat
   | .shuffleBlock _ oc _ _          => oc
   | .evoformerBlock msaCh _ _       => msaCh  -- MSA channels as the "main" dim
   | .structureModule sCh _ _        => sCh    -- single-repr channels
+  | .mobileVitBlock ic _ _ _ _      => ic     -- block is ic → ic
   | _                               => 0  -- pool/flatten/GAP: pass-through
 
 /-- Input channels expected by a layer. Returns 0 for layers that accept any input. -/
@@ -310,6 +326,7 @@ def Layer.inChannels : Layer → Nat
   | .shuffleBlock ic _ _ _          => ic
   | .evoformerBlock msaCh _ _       => msaCh
   | .structureModule sCh _ _        => sCh
+  | .mobileVitBlock ic _ _ _ _      => ic
   | _                               => 0  -- pool/flatten/GAP: accept anything
 
 /-- Validate that channel dimensions chain correctly through the spec.

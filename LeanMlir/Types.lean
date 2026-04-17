@@ -77,6 +77,16 @@ inductive Layer where
   -- Attention (IPA) over residues + backbone frame updates + side-chain
   -- χ angle prediction. Shared weights across blocks (recurrent).
   | structureModule (singleChannels pairChannels nBlocks : Nat)
+  -- MobileViT block (Mehta & Rastegari 2022): local 3×3 conv + 1×1
+  -- projection to transformer dim, unfold into patches, `nTxBlocks`
+  -- small-transformer blocks across patches, fold back, 1×1 projection
+  -- back to `ic`, concat with input, fusion 3×3 conv.
+  --   ic      — spatial feature channels (block is ic→ic)
+  --   dim     — transformer dim (`d` in the paper, typically 144/192/240)
+  --   heads   — attention heads per transformer block
+  --   mlpDim  — FFN dim of the inner transformer
+  --   nTxBlocks — number of transformer blocks inside the unit (L)
+  | mobileVitBlock (ic dim heads mlpDim nTxBlocks : Nat)
 deriving Repr
 
 structure NetSpec where
