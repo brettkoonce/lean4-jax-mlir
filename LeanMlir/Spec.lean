@@ -102,6 +102,22 @@ def Layer.nParams : Layer → Nat
                     + 5 * expand * dim
                     + dim
       nBlocks * perBlock
+  | .swinStage dim heads mlpDim windowSize nBlocks =>
+      -- Per-block (Liu et al. 2021 Swin):
+      --   2 LayerNorms (γ+β per): 2·(2·dim) = 4·dim
+      --   W-MSA: Q/K/V/O projections: 4·(dim² + dim)
+      --   Relative position bias: (2·ws-1)² · heads
+      --   MLP: dim·mlpDim + mlpDim + mlpDim·dim + dim
+      let biasTerms := (2 * windowSize - 1) * (2 * windowSize - 1) * heads
+      let perBlock := 4 * dim
+                    + 4 * (dim * dim + dim)
+                    + biasTerms
+                    + (dim * mlpDim + mlpDim)
+                    + (mlpDim * dim + dim)
+      nBlocks * perBlock
+  | .patchMerging inDim outDim =>
+      -- LN on concatenated 4·inDim + linear (4·inDim → outDim) + bias.
+      (2 * 4 * inDim) + (4 * inDim * outDim + outDim)
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
@@ -166,7 +182,9 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .fireModule ic sq e1 e3 => s!"Fire({ic}→{e1 + e3},sq{sq})"
     | .patchEmbed ic dim p _     => s!"Patch({ic}→{dim},{p}x{p})"
     | .transformerEncoder dim h _ n => s!"Trans({n}x[{h}h,{dim}])"
-    | .mambaBlock dim st exp n   => s!"Mamba{n}(dim={dim},state={st},exp={exp})")
+    | .mambaBlock dim st exp n   => s!"Mamba{n}(dim={dim},state={st},exp={exp})"
+    | .swinStage dim h _ ws n    => s!"Swin{n}(dim={dim},heads={h},win={ws})"
+    | .patchMerging i o          => s!"PatchMerge({i}→{o})")
 
 -- ===========================================================================
 -- Validation: catch channel/dimension mismatches at `lake build` time
@@ -189,6 +207,8 @@ def Layer.outChannels : Layer → Nat
   | .patchEmbed _ dim _ _           => dim
   | .transformerEncoder dim _ _ _   => dim
   | .mambaBlock dim _ _ _           => dim
+  | .swinStage dim _ _ _ _          => dim
+  | .patchMerging _ outDim          => outDim
   | _                               => 0  -- pool/flatten/GAP: pass-through
 
 /-- Input channels expected by a layer. Returns 0 for layers that accept any input. -/
@@ -208,6 +228,8 @@ def Layer.inChannels : Layer → Nat
   | .patchEmbed ic _ _ _            => ic
   | .transformerEncoder dim _ _ _   => dim
   | .mambaBlock dim _ _ _           => dim
+  | .swinStage dim _ _ _ _          => dim
+  | .patchMerging inDim _           => inDim
   | _                               => 0  -- pool/flatten/GAP: accept anything
 
 /-- Validate that channel dimensions chain correctly through the spec.
@@ -236,6 +258,11 @@ def NetSpec.validate (s : NetSpec) : Option String := Id.run do
     | .transformerEncoder .. => afterTransformer := true
     -- Mamba behaves like transformer for shape-chaining: (L, D) in, (L, D) out.
     | .mambaBlock .. => afterTransformer := true
+    -- Swin stage: (H·W, D) in, same out. Patch merging updates prevOc to outDim.
+    | .swinStage .. => pure ()  -- dim unchanged; prevOc already = dim
+    | .patchMerging _ outDim =>
+        prevOc := outDim
+        afterGAP := false; afterFlatten := false; afterTransformer := false
     | _ =>
       let oc := l.outChannels
       if oc > 0 then

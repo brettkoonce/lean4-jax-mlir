@@ -11,6 +11,8 @@ like in ~20 lines of Lean."
 | File | Architecture | Variants | Notes |
 |------|--------------|----------|-------|
 | `AlphaZero.lean` | AlphaZero / AlphaGo Zero | original Go, chess, tiny | Two-headed (policy + value) |
+| `Mamba.lean`     | Mamba (selective SSM)     | 130M / 370M / 790M / tiny | Language model, linear-time alternative to attention |
+| `SwinT.lean`     | Swin Transformer          | Swin-T / Swin-S / Swin-B / tiny | Hierarchical ViT, windowed + shifted attention |
 
 ## Adding a new entry
 

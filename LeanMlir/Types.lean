@@ -33,6 +33,14 @@ inductive Layer where
   -- expand = inner-dim multiplier. Not codegen-backed yet — used by the
   -- Bestiary as a shape-only primitive for language-model architectures.
   | mambaBlock (dim stateSize expand nBlocks : Nat)
+  -- Swin Transformer stage: N blocks of (W-MSA + MLP) with residuals, plus
+  -- the alternating shifted-window variant. Window-local attention at fixed
+  -- resolution. Not codegen-backed yet (bestiary primitive).
+  | swinStage (dim heads mlpDim windowSize nBlocks : Nat)
+  -- Swin patch merging: 2×2 spatial downsample, channels go inDim → outDim
+  -- (typically 4·inDim → 2·inDim in the paper, but `outDim` is stated
+  -- explicitly to match any hierarchy).
+  | patchMerging (inDim outDim : Nat)
 deriving Repr
 
 structure NetSpec where
