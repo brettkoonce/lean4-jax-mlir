@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lean4-MLIR — Verified VJP Proofs for Deep Learning</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 0 20px;
+      line-height: 1.6;
+      color: #222;
+    }
+    h1 { font-size: 1.8em; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+    h2 { font-size: 1.3em; color: #444; margin-top: 2em; }
+    a { color: #0366d6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    ul.links { list-style: none; padding-left: 0; }
+    ul.links li { margin: 8px 0; padding: 10px 14px; background: #f6f8fa; border-radius: 6px; }
+    ul.links li a { font-weight: 600; }
+    code { font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace;
+           background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+    table { border-collapse: collapse; margin: 1em 0; }
+    th, td { padding: 6px 14px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f6f8fa; }
+    .subtitle { color: #666; font-style: italic; margin-top: -10px; }
+  </style>
+</head>
+<body>
+
+<h1>Lean4-MLIR: Verified VJP Proofs for Deep Learning</h1>
+<p class="subtitle">Machine-checked backprop for every layer up to ViT, compiled through StableHLO + IREE to GPU.</p>
+
+<p>Companion artifact for the upcoming book <em>Verified Deep Learning with Lean&nbsp;4</em>.
+Full source: <a href="https://github.com/brettkoonce/lean4-mlir">github.com/brettkoonce/lean4-mlir</a>.</p>
+
+<h2>Navigate the proofs</h2>
+<ul class="links">
+  <li><a href="blueprint/">Blueprint &mdash; interactive web version</a>
+      <br><span>LaTeX-rendered statements, proof tree, cross-links to Lean source.</span></li>
+  <li><a href="blueprint/dep_graph_document.html">Dependency graph &mdash; clickable DAG</a>
+      <br><span>78 nodes (30 axioms + 48 theorems), colored and clustered by file.</span></li>
+  <li><a href="blueprint.pdf">Blueprint &mdash; PDF</a>
+      <br><span>Printable version if you prefer paper.</span></li>
+  <li><a href="deps.svg">Static SVG dependency map</a>
+      <br><span>The graphviz-generated one-pager (book figure).</span></li>
+</ul>
+
+<h2>The big idea</h2>
+<p>Every modern architecture's backward pass decomposes into
+<strong>three structural rules</strong> (chain, fan-in, product) plus
+<strong>five closed-form Jacobian tricks</strong>
+(diagonal, sparse toeplitz, binary selection, rank-1 correction, outer product).
+The proof suite makes this claim concrete: every layer VJP is a <code>HasVJP</code>
+instance, every composition is <code>vjp_comp</code>, every residual is
+<code>biPath_has_vjp</code>, and the whole ViT backbone lands as a single
+<code>HasVJPMat</code> theorem derived from one axiom (<code>mhsa_has_vjp_mat</code>).</p>
+
+<p>The resulting trust kernel: 30 axioms, zero <code>sorry</code>s. Hit
+<a href="blueprint/">the blueprint</a> and click <code>vit_body_has_vjp_mat</code>
+to see the whole chain light up back to primitives.</p>
+
+<h2>Results from the companion code</h2>
+<p>Trained from scratch on Imagenette, 224&times;224, Adam + cosine LR:</p>
+
+<table>
+  <tr><th>Model</th><th>Params</th><th>Val accuracy</th></tr>
+  <tr><td>ResNet-34</td>          <td>21.3M</td><td>90.29%</td></tr>
+  <tr><td>ResNet-50</td>          <td>23.5M</td><td>89.40%</td></tr>
+  <tr><td>EfficientNetV2-S</td>   <td>38.2M</td><td>88.50%</td></tr>
+  <tr><td>EfficientNet-B0</td>    <td>7.2M</td> <td>87.58%</td></tr>
+  <tr><td>MobileNetV2</td>        <td>2.2M</td> <td>87.09%</td></tr>
+  <tr><td>MobileNetV3-Large</td>  <td>3.0M</td> <td>86.48%</td></tr>
+  <tr><td>MobileNetV4-Medium</td> <td>4.1M</td> <td>84.58%</td></tr>
+  <tr><td>ViT-Tiny</td>           <td>5.5M</td> <td>71.70%</td></tr>
+</table>
+
+<p>All from ~15-line Lean <code>NetSpec</code> declarations, compiled through
+StableHLO MLIR, trained end-to-end via IREE on AMD gfx1100 / NVIDIA CUDA.
+No Python runtime in the loop.</p>
+
+</body>
+</html>
