@@ -17,9 +17,10 @@ Tensor.lean                    ← axioms + VJP framework
   │  biPath    (additive fan-in — proved)
   │  elemwiseProduct (multiplicative fan-in — proved)
   │
-  ├── MLP.lean                 dense + ReLU + softmax CE
+  ├── MLP.lean                 dense (input + weight + bias grads) + ReLU + softmax CE
   │
-  ├── CNN.lean                 conv2d + maxPool + flatten
+  ├── CNN.lean                 conv2d (input + weight grads) + maxPool + flatten
+  │                            (incl. Kernel4.flatten bijection, Phase 7)
   │
   ├── BatchNorm.lean           batch norm (the hard one)
   │     │
@@ -29,7 +30,7 @@ Tensor.lean                    ← axioms + VJP framework
   │
   ├── Residual.lean            skip connections (biPath)
   │
-  ├── Depthwise.lean           depthwise conv
+  ├── Depthwise.lean           depthwise conv (input + weight grads)
   │
   ├── SE.lean                  squeeze-and-excitation (elemwiseProduct)
   │
@@ -54,15 +55,27 @@ All axiom declarations across the proof suite, grouped by file:
 | `pdiv_reindex` | Gather Jacobian: `∂y_{σ(k)}/∂y_i = δ_{i,σ(k)}` |
 | `pdivMat_rowIndep` | Row-independent function ⇒ block-diagonal Jacobian |
 
-> **Progression** — axioms 41 → 24 over several phases:
+> **Progression** — axioms 41 → 26 over several phases:
 > - **Phases 4–5**: `pdivMat`, `pdivMat_comp`, `pdivMat_add`,
 >   `pdivMat_id` and the whole `pdiv3` family collapsed to
 >   definitions + theorems via the `Mat.flatten` / `Tensor3.flatten`
 >   bijections.
-> - **Phase 6** (this commit): `pdivMat_scalarScale`, `pdivMat_transpose`,
+> - **Phase 6**: `pdivMat_scalarScale`, `pdivMat_transpose`,
 >   and both `pdivMat_matmul_{left,right}_const` derived from
 >   `pdiv_const` + `pdiv_reindex` + `pdiv_finset_sum` (itself a
 >   theorem, via `Finset.induction_on` over `pdiv_add` + `pdiv_const`).
+> - **Phase 7** (this commit): **Weight-gradient correctness**, closing
+>   the gap where `conv2d_weight_grad` and `depthwise_weight_grad` were
+>   documented in prose but had no formal axiom. Two new bundled VJP
+>   axioms (`conv2d_weight_grad_has_vjp`, `depthwise_weight_grad_has_vjp3`),
+>   plus one new elementary Jacobian axiom `pdiv_dense_W` that unlocks
+>   a proved `dense_weight_grad_correct` theorem (the old `Mat.outer`
+>   `rfl` was vacuous). Dense bias gradient becomes a theorem too,
+>   derived purely from existing axioms via `pdiv_add` + `pdiv_const`
+>   + `pdiv_id`. `Kernel4.flatten` / `unflatten` added as a proved
+>   bijection mirroring `Mat.flatten` / `Tensor3.flatten`, so the
+>   4D weight tensor can be plumbed through the plain `HasVJP` on `Vec`
+>   instead of introducing a parallel 4D framework.
 >
 > Remaining Mat-level axiom: only `pdivMat_rowIndep` — the
 > genuinely-new-primitive that ties Mat-row structure to Vec-level
@@ -72,22 +85,31 @@ All axiom declarations across the proof suite, grouped by file:
 **MLP.lean** — dense layers:
 | Axiom | What it says |
 |-------|-------------|
-| `pdiv_dense` | Dense layer Jacobian |
+| `pdiv_dense` | Dense layer Jacobian wrt input |
+| `pdiv_dense_W` | Dense Jacobian wrt weight (Phase 7; unlocks the outer-product theorem) |
 | `pdiv_relu` | ReLU Jacobian (diagonal, 0/1) |
 | `softmaxCE_grad` | Softmax cross-entropy gradient = softmax − onehot |
+
+> `dense_weight_grad_correct` (outer product is the weight gradient)
+> and `dense_bias_grad_correct` (bias gradient is identity) are now
+> theorems. The former uses `pdiv_dense_W`; the latter is derived from
+> `pdiv_add` + `pdiv_const` + `pdiv_id` with no new axiom.
 
 **CNN.lean** — convolution and pooling:
 | Axiom | What it says |
 |-------|-------------|
 | `conv2d` | Conv forward (opaque function) |
 | `conv2d_has_vjp3` | Conv2d input-VJP (function + correctness bundled) |
+| `conv2d_weight_grad_has_vjp` | Conv2d weight-VJP via flattened `HasVJP` (Phase 7) |
 | `maxPool2` | MaxPool forward (opaque function) |
 | `maxPool2_has_vjp3` | MaxPool2 input-VJP (function + correctness bundled) |
 
-> The weight-gradient formula (transpose trick) is documented in
-> `CNN.lean` but not axiomatized — stating its correctness requires a
-> parameterized VJP framework (`HasVJP3_params`) we don't have yet.
-> We prefer missing documentation over a vacuous shape-only axiom.
+> Phase 7: the weight gradient is now axiomatized via the `Kernel4.flatten`
+> bijection, so `HasVJP` on `Vec (oc*ic*kH*kW)` suffices — no parallel
+> 4D framework needed. The conv bias gradient formula (sum over spatial)
+> is defined as `conv2d_bias_grad` and documented, but since `conv2d`
+> is opaque in `b` we leave it outside the `HasVJP` frame; it's
+> cross-checked numerically instead.
 
 **BatchNorm.lean** — the hard one:
 | Axiom | What it says |
@@ -109,9 +131,12 @@ All axiom declarations across the proof suite, grouped by file:
 |-------|-------------|
 | `depthwiseConv2d` | Depthwise conv forward (opaque function) |
 | `depthwise_has_vjp3` | Depthwise input-VJP (function + correctness bundled) |
+| `depthwise_weight_grad_has_vjp3` | Depthwise weight-VJP (Phase 7) |
 
-> Depthwise weight gradient documented in-file, not axiomatized (same
-> rationale as `conv2d_weight_grad`).
+> The depthwise kernel `DepthwiseKernel c kH kW` is definitionally equal
+> to `Tensor3 c kH kW`, so the weight-grad axiom reuses the existing
+> `HasVJP3` directly — no `Kernel4.flatten` needed (unlike the regular
+> conv case, which has a 4D kernel).
 
 **LayerNorm.lean** — layer norm and GELU:
 | Axiom | What it says |
@@ -136,8 +161,8 @@ All axiom declarations across the proof suite, grouped by file:
 Plus three Lean core axioms (`propext`, `Classical.choice`, `Quot.sound`)
 present in every nontrivial Lean program.
 
-Total: 8 (Tensor) + 3 (MLP) + 4 (CNN) + 3 (BatchNorm) + 2 (Depthwise)
-+ 3 (LayerNorm) + 1 (Attention) = **24 axioms**.
+Total: 8 (Tensor) + 4 (MLP) + 5 (CNN) + 3 (BatchNorm) + 3 (Depthwise)
++ 3 (LayerNorm) + 1 (Attention) = **27 axioms**.
 
 Everything else — every `HasVJP` instance, every composition,
 every correctness theorem — is proved from these axioms by
@@ -168,6 +193,10 @@ sdpa_back_Q_correct    → pdivMat, pdivMat_matmul_left_const,
                          pdivMat_comp, pdiv, pdiv_softmax
 sdpa_back_K_correct    → (same as Q) + pdivMat_transpose
 dense_has_vjp          → pdiv, pdiv_dense
+dense_weight_grad_correct → pdiv, pdiv_dense_W          (Phase 7 — one new axiom)
+dense_bias_grad_correct   → pdiv, pdiv_add, pdiv_const, pdiv_id  (Phase 7 — zero new axioms)
+conv2d_weight_grad     → pdiv, conv2d, conv2d_weight_grad_has_vjp     (Phase 7)
+depthwiseConv2d_weight_grad → pdiv, depthwiseConv2d, depthwise_weight_grad_has_vjp3  (Phase 7)
 bn_has_vjp             → pdiv, pdiv_bnAffine, pdiv_bnCentered, pdiv_bnIstdBroadcast, pdiv_comp, pdiv_mul
 bn_input_grad_correct  → (same as bn_has_vjp)
 bnNormalize_has_vjp    → pdiv, pdiv_bnCentered, pdiv_bnIstdBroadcast, pdiv_mul

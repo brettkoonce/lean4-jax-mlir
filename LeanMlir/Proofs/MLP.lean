@@ -24,6 +24,18 @@ axiom pdiv_dense {m n : Nat} (W : Mat m n) (b : Vec n)
     (x : Vec m) (i : Fin m) (j : Fin n) :
     pdiv (dense W b) x i j = W i j
 
+/-- **Jacobian of dense wrt W** (new, Phase 7).
+
+    `∂ dense(W, b, x)_j / ∂ W_{i', j'} = x_{i'} · δ(j, j')`
+
+    Stated over the `Mat.flatten` bijection so we can reuse the `pdiv`
+    framework on `Vec (m*n)`. Symmetric counterpart to `pdiv_dense`. -/
+axiom pdiv_dense_W {m n : Nat} (b : Vec n) (x : Vec m) (W : Mat m n)
+    (i : Fin m) (j' : Fin n) (j : Fin n) :
+    pdiv (fun v : Vec (m * n) => dense (Mat.unflatten v) b x)
+         (Mat.flatten W) (finProdFinEquiv (i, j')) j =
+      if j = j' then x i else 0
+
 /-- Dense VJP — proved. -/
 noncomputable def dense_has_vjp {m n : Nat} (W : Mat m n) (b : Vec n) :
     HasVJP (dense W b) where
@@ -33,8 +45,62 @@ noncomputable def dense_has_vjp {m n : Nat} (W : Mat m n) (b : Vec n) :
     simp only [Mat.mulVec]
     congr 1; ext j; rw [pdiv_dense]
 
-theorem dense_weight_grad {m n : Nat} (x : Vec m) (dy : Vec n) :
-    Mat.outer x dy = (fun i j => x i * dy j) := rfl
+/-- **Dense weight gradient is the outer product** — theorem (Phase 7).
+
+    `Mat.outer x dy` is the cotangent-contracted Jacobian of `dense(W, b, x)`
+    with respect to `W`, at every index. This promotes the previous vacuous
+    `rfl` about `Mat.outer` into a real theorem connecting the outer product
+    to the actual weight gradient of `dense`.
+
+    `(Mat.outer x dy) i j = ∑ k, pdiv (…) (Mat.flatten W) (fPF (i, j)) k · dy k` -/
+theorem dense_weight_grad_correct {m n : Nat} (W : Mat m n) (b : Vec n)
+    (x : Vec m) (dy : Vec n) (i : Fin m) (j : Fin n) :
+    Mat.outer x dy i j =
+      ∑ k : Fin n,
+        pdiv (fun v : Vec (m * n) => dense (Mat.unflatten v) b x)
+             (Mat.flatten W) (finProdFinEquiv (i, j)) k * dy k := by
+  simp_rw [pdiv_dense_W]
+  -- Σ k, (if k = j then x i else 0) * dy k  collapses to x i * dy j
+  rw [Finset.sum_eq_single j
+      (fun k _ hne => by rw [if_neg hne]; ring)
+      (fun h => absurd (Finset.mem_univ j) h)]
+  simp [Mat.outer]
+
+/-- **Dense bias gradient is identity** — theorem (Phase 7).
+
+    `∂ dense(W, b, x)_j / ∂ b_{j'} = δ(j, j')`, so the bias backward is
+    just `dy` itself. Derived from `pdiv_add` + `pdiv_const` + `pdiv_id`
+    — no new axiom. -/
+theorem pdiv_dense_b {m n : Nat} (W : Mat m n) (b : Vec n) (x : Vec m)
+    (i j : Fin n) :
+    pdiv (fun b' : Vec n => dense W b' x) b i j = if i = j then 1 else 0 := by
+  -- Rewrite `fun b' => dense W b' x` as `(constant in b') + (identity on b')`.
+  have hDec : (fun b' : Vec n => dense W b' x) =
+              (fun b' k => (fun (_ : Vec n) (k' : Fin n) =>
+                              ∑ i' : Fin m, x i' * W i' k') b' k +
+                           (fun (y : Vec n) => y) b' k) := by
+    funext b' k; rfl
+  rw [hDec, pdiv_add, pdiv_const, pdiv_id]
+  ring
+
+theorem dense_bias_grad_correct {m n : Nat} (W : Mat m n) (b : Vec n)
+    (x : Vec m) (dy : Vec n) (i : Fin n) :
+    dy i =
+      ∑ j : Fin n, pdiv (fun b' : Vec n => dense W b' x) b i j * dy j := by
+  simp_rw [pdiv_dense_b W b x]
+  rw [Finset.sum_eq_single i
+      (fun j _ hne => by rw [if_neg (Ne.symm hne)]; ring)
+      (fun h => absurd (Finset.mem_univ i) h)]
+  simp
+
+/-- **Dense weight backward** — named accessor.
+    `dW = x ⊗ dy` (outer product). -/
+noncomputable def dense_weight_grad {m n : Nat}
+    (x : Vec m) (dy : Vec n) : Mat m n :=
+  Mat.outer x dy
+
+/-- **Dense bias backward** — named accessor. `db = dy`. -/
+def dense_bias_grad {n : Nat} (dy : Vec n) : Vec n := dy
 
 -- ════════════════════════════════════════════════════════════════
 -- § ReLU:  y = max(x, 0)

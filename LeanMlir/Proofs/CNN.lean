@@ -48,6 +48,61 @@ namespace Proofs
 abbrev Kernel4 (oc ic kh kw : Nat) :=
   Fin oc → Fin ic → Fin kh → Fin kw → ℝ
 
+namespace Kernel4
+
+/-! `Kernel4 oc ic kH kW` and `Vec (oc * ic * kH * kW)` are in bijection
+    by row-major flattening — mirrors `Mat.flatten` / `Tensor3.flatten`.
+    We need this so that the weight-gradient VJP can be stated as a plain
+    `HasVJP` (Vec → Vec) on the flattened kernel, reusing the existing
+    framework instead of introducing a parallel 4D machinery.
+
+    Nat multiplication associates left, so `oc * ic * kH * kW` parses as
+    `((oc * ic) * kH) * kW` — three nested `finProdFinEquiv` calls. -/
+
+/-- Row-major flatten: `Kernel4 oc ic kH kW → Vec (oc * ic * kH * kW)`. -/
+noncomputable def flatten {oc ic kH kW : Nat}
+    (W : Kernel4 oc ic kH kW) : Vec (oc * ic * kH * kW) :=
+  fun k =>
+    let ockH_kW := finProdFinEquiv.symm k         -- : Fin (oc*ic*kH) × Fin kW
+    let ocic_kH := finProdFinEquiv.symm ockH_kW.1 -- : Fin (oc*ic) × Fin kH
+    let oc_ic   := finProdFinEquiv.symm ocic_kH.1 -- : Fin oc × Fin ic
+    W oc_ic.1 oc_ic.2 ocic_kH.2 ockH_kW.2
+
+/-- Row-major unflatten: inverse of `flatten`. -/
+noncomputable def unflatten {oc ic kH kW : Nat}
+    (v : Vec (oc * ic * kH * kW)) : Kernel4 oc ic kH kW :=
+  fun o c kh kw =>
+    v (finProdFinEquiv (finProdFinEquiv (finProdFinEquiv (o, c), kh), kw))
+
+theorem unflatten_flatten {oc ic kH kW : Nat}
+    (W : Kernel4 oc ic kH kW) : unflatten (flatten W) = W := by
+  funext o c kh kw
+  unfold unflatten flatten
+  simp [Equiv.symm_apply_apply]
+
+theorem flatten_unflatten {oc ic kH kW : Nat}
+    (v : Vec (oc * ic * kH * kW)) : flatten (unflatten v) = v := by
+  funext k
+  -- After `change`, Lean's Prod struct-eta already collapses the innermost
+  -- pair `(c.1, c.2)` to `c = fPF.symm (..).1`, so we start by collapsing
+  -- that innermost `fPF (fPF.symm ...)` directly. Two more round-trips follow,
+  -- each needing an explicit Prod-eta `show` + another `Equiv.apply_symm_apply`.
+  change v (finProdFinEquiv
+    (finProdFinEquiv
+      (finProdFinEquiv (finProdFinEquiv.symm (finProdFinEquiv.symm (finProdFinEquiv.symm k).1).1),
+       (finProdFinEquiv.symm (finProdFinEquiv.symm k).1).2),
+     (finProdFinEquiv.symm k).2)) = v k
+  rw [Equiv.apply_symm_apply]
+  rw [show ((finProdFinEquiv.symm (finProdFinEquiv.symm k).1).1,
+            (finProdFinEquiv.symm (finProdFinEquiv.symm k).1).2) =
+           finProdFinEquiv.symm (finProdFinEquiv.symm k).1 from rfl,
+      Equiv.apply_symm_apply]
+  rw [show ((finProdFinEquiv.symm k).1, (finProdFinEquiv.symm k).2) =
+           finProdFinEquiv.symm k from rfl,
+      Equiv.apply_symm_apply]
+
+end Kernel4
+
 -- ════════════════════════════════════════════════════════════════
 -- § Conv2d
 -- ════════════════════════════════════════════════════════════════
@@ -107,7 +162,7 @@ noncomputable abbrev conv2d_input_grad {ic oc h w kH kW : Nat}
     (x : Tensor3 ic h w) (dy : Tensor3 oc h w) : Tensor3 ic h w :=
   (conv2d_has_vjp3 W b).backward x dy
 
-/-! ### Weight gradient (codegen interface, not axiomatized here)
+/-! ### Weight gradient (Phase 7 — now axiomatized)
 
 The conv weight gradient implements the **transpose trick**:
 
@@ -136,13 +191,37 @@ MLIR (Conv 1 backward — exactly this trick):
     %d_W0_raw = "stablehlo.convolution"(%x_t, %dh0p_t) ...        -- (1,32,3,3)
     %d_W0     = stablehlo.transpose %d_W0_raw, dims = [1, 0, 2, 3] -- (32,1,3,3)
 
-**Why no axiom here.** The `HasVJP3` framework only covers input→output
-VJPs. Stating correctness for a weight gradient requires a parameterized
-variant (`HasVJP3_params` or similar) that we don't yet have. Rather
-than introduce a vacuous shape-only axiom (asserting a function
-exists without any correctness claim), we document the formula here
-and defer the formal statement to when the parameterized framework
-arrives. -/
+**Framework.** `HasVJP3` covered only input→output VJPs. For the
+weight gradient we reuse the plain `HasVJP` on `Vec` by flattening
+both the kernel (`Kernel4.flatten : Kernel4 → Vec (oc*ic*kH*kW)`) and
+the output (`Tensor3.flatten : Tensor3 → Vec (oc*h*w)`). The axiom
+asserts existence of a correct backward for the flattened function;
+the user-facing `conv2d_weight_grad` wrapper does the flatten / unflatten
+housekeeping so callers see the natural `Kernel4` type.
+
+Numerical validation: `check_axioms.py:test_conv2d_weight_grad`
+gradient-checks the transpose-trick formula against finite differences. -/
+
+/-- **Conv2d weight-VJP** — bundled axiom on the `W`-flattened function.
+
+    View `fun W => conv2d W b x` through the Kernel4 ↔ Vec bijection and
+    the output's Tensor3 ↔ Vec bijection; the resulting `Vec → Vec` function
+    has a plain `HasVJP`. Its `.backward` is the transpose-trick formula
+    documented above, gradient-checked numerically. -/
+axiom conv2d_weight_grad_has_vjp {ic oc h w kH kW : Nat}
+    (b : Vec oc) (x : Tensor3 ic h w) :
+    HasVJP (fun v : Vec (oc * ic * kH * kW) =>
+              Tensor3.flatten (conv2d (Kernel4.unflatten v) b x))
+
+/-- Named accessor for the conv2d weight backward — aligns with MLIR
+    codegen (the "transpose trick" `stablehlo.convolution` in the backward
+    pass). Unwraps the flattening so callers see `Kernel4 → Kernel4`. -/
+noncomputable def conv2d_weight_grad {ic oc h w kH kW : Nat}
+    (W : Kernel4 oc ic kH kW) (b : Vec oc)
+    (x : Tensor3 ic h w) (dy : Tensor3 oc h w) : Kernel4 oc ic kH kW :=
+  Kernel4.unflatten
+    ((conv2d_weight_grad_has_vjp b x).backward
+      (Kernel4.flatten W) (Tensor3.flatten dy))
 
 /-- **Conv2d bias gradient** — sum the output cotangent over all spatial cells.
 
@@ -253,11 +332,11 @@ for the mutual-inverse proofs. -/
         d_pool    = unflatten d_d₀in                              [flatten VJP = unflatten]
         d_h₁      = maxPool2_input_grad h₁ d_pool                 [maxPool2_input_grad]
         d_h₁pre   = relu_back h₁pre d_h₁                          [relu_has_vjp, lifted to T3]
-        d_W1      = (weight-grad formula above)                   ← transpose trick (documented, not axiomatized)
+        d_W1      = conv2d_weight_grad W₁ b₁ h₀ d_h₁pre           [conv2d_weight_grad_has_vjp]  ← transpose trick
         d_b1      = conv2d_bias_grad d_h₁pre                      [conv2d_bias_grad]
         d_h₀      = conv2d_input_grad W₁ b₁ h₀ d_h₁pre            [conv2d_has_vjp3]     ← reversed kernel
         d_h₀pre   = relu_back h₀pre d_h₀                          [relu_has_vjp, lifted to T3]
-        d_W0      = (weight-grad formula above)                   ← transpose trick
+        d_W0      = conv2d_weight_grad W₀ b₀ x d_h₀pre            [conv2d_weight_grad_has_vjp]  ← transpose trick
         d_b0      = conv2d_bias_grad d_h₀pre                      [conv2d_bias_grad]
 
     Each line of the backward pass corresponds to a single line in
@@ -280,16 +359,21 @@ example : True := trivial  -- anchor for the docstring above
 - `conv2d_has_vjp3`, `maxPool2_has_vjp3` — the input-path VJPs, each
   packaging both the backward function and its correctness into a
   single `HasVJP3` axiom.
+- `conv2d_weight_grad_has_vjp` — Phase 7: the weight-path VJP, bundled
+  as a plain `HasVJP` on the Kernel4-flattened function. Numerically
+  gradient-checked against the transpose-trick formula in
+  `check_axioms.py:test_conv2d_weight_grad`.
 
 Derived (not axioms):
-- `conv2d_input_grad`, `maxPool2_input_grad` — named accessors, defined
-  as `.backward` of the corresponding `HasVJP3`.
-- `conv2d_bias_grad` — concrete sum-over-spatial formula.
-- 3D reshape (`Tensor3.flatten` / `Tensor3.unflatten`) is imported from
-  `Tensor.lean` as a proved bijection.
-
-Documented but not axiomatized:
-- Weight gradient (`dW`) — transpose-trick formula in the docstring
-  above. Awaits a parameterized `HasVJP3_params` framework. -/
+- `conv2d_input_grad`, `maxPool2_input_grad`, `conv2d_weight_grad` —
+  named accessors, defined as `.backward` (plus flatten / unflatten
+  housekeeping for `conv2d_weight_grad`) of the corresponding VJP.
+- `conv2d_bias_grad` — concrete sum-over-spatial formula (no VJP
+  framework claim; conv is opaque wrt `b`, so this is documented as
+  the "correct formula" and cross-checked numerically rather than
+  formally tied to a `pdiv`).
+- 3D reshape (`Tensor3.flatten` / `Tensor3.unflatten`) imported from
+  `Tensor.lean`; 4D reshape (`Kernel4.flatten` / `Kernel4.unflatten`)
+  defined here, both proved bijections. -/
 
 end Proofs

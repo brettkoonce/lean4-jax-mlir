@@ -223,6 +223,60 @@ def test_conv2d_weight_grad():
     return err < TOL
 
 # ════════════════════════════════════════════════════════════════
+# Dense weight grad: dW = outer(x, dy). ∂(xW+b)_j/∂W_{i,j'} = x_i if j=j' else 0
+# (Phase 7: new axiom pdiv_dense_W + theorem dense_weight_grad_correct.)
+# ════════════════════════════════════════════════════════════════
+def test_dense_weight_grad():
+    m, n = 4, 3
+    W = np.random.randn(m, n)
+    b = np.random.randn(n)
+    x = np.random.randn(m)
+    dy = np.random.randn(n)
+
+    # Finite-diff: perturb each W entry, measure <d output, dy>
+    def fwd(Wv):
+        return Wv.reshape(m, n).T @ x + b
+    dW_fd = np.zeros_like(W)
+    Wf = W.ravel()
+    for idx in range(len(Wf)):
+        Wp = Wf.copy(); Wp[idx] += EPS
+        Wm = Wf.copy(); Wm[idx] -= EPS
+        dW_fd.ravel()[idx] = np.sum(((fwd(Wp) - fwd(Wm)) / (2 * EPS)) * dy)
+
+    # Claimed: dW = outer(x, dy) with shape (m, n)
+    dW_claimed = np.outer(x, dy)
+
+    err = np.max(np.abs(dW_fd - dW_claimed))
+    status = "PASS" if err < TOL else "FAIL"
+    print(f"  {status}: {'dense_weight_grad (outer)':30s} max_err={err:.2e}")
+    return err < TOL
+
+# ════════════════════════════════════════════════════════════════
+# Dense bias grad: db = dy. ∂(xW+b)_j/∂b_i = δ(i,j)
+# (Phase 7: theorem pdiv_dense_b, derived from pdiv_add + pdiv_const + pdiv_id.)
+# ════════════════════════════════════════════════════════════════
+def test_dense_bias_grad():
+    m, n = 4, 3
+    W = np.random.randn(m, n)
+    b = np.random.randn(n)
+    x = np.random.randn(m)
+    dy = np.random.randn(n)
+
+    def fwd(bv):
+        return x @ W + bv
+    db_fd = np.zeros_like(b)
+    for idx in range(n):
+        bp = b.copy(); bp[idx] += EPS
+        bm = b.copy(); bm[idx] -= EPS
+        db_fd[idx] = np.sum(((fwd(bp) - fwd(bm)) / (2 * EPS)) * dy)
+
+    db_claimed = dy.copy()
+    err = np.max(np.abs(db_fd - db_claimed))
+    status = "PASS" if err < TOL else "FAIL"
+    print(f"  {status}: {'dense_bias_grad (identity)':30s} max_err={err:.2e}")
+    return err < TOL
+
+# ════════════════════════════════════════════════════════════════
 # MaxPool2: gradient routes to argmax
 # ════════════════════════════════════════════════════════════════
 def test_maxpool2():
@@ -392,6 +446,61 @@ def test_depthwise_input_grad():
     return err < TOL
 
 # ════════════════════════════════════════════════════════════════
+# Depthwise weight grad: per-channel transpose trick
+# (Phase 7: new axiom depthwise_weight_grad_has_vjp3.)
+# ════════════════════════════════════════════════════════════════
+def test_depthwise_weight_grad():
+    """Depthwise weight VJP: per-channel transpose trick. Unlike regular
+    conv's `(oc, ic, kH, kW)`, the depthwise kernel is `(c, kH, kW)` —
+    no cross-channel sum, each channel's kernel gets its own independent
+    gradient from its own slice of x and dy."""
+    c, h, w, kH, kW = 3, 6, 6, 3, 3
+    W = np.random.randn(c, kH, kW)
+    pad = (kH - 1) // 2
+
+    def dw_fwd(Wv):
+        Wr = Wv.reshape(c, kH, kW)
+        out = np.zeros((c, h, w))
+        for ch in range(c):
+            for kh in range(kH):
+                for kw in range(kW):
+                    for i in range(h):
+                        for j in range(w):
+                            ii, jj = i + kh - pad, j + kw - pad
+                            if 0 <= ii < h and 0 <= jj < w:
+                                out[ch, i, j] += x[ch, ii, jj] * Wr[ch, kh, kw]
+        return out
+
+    x = np.random.randn(c, h, w)
+    dy = np.random.randn(c, h, w)
+
+    # Finite-diff: perturb each W entry, measure <Δoutput, dy>
+    dW_fd = np.zeros_like(W)
+    Wf = W.ravel()
+    for idx in range(len(Wf)):
+        Wp = Wf.copy(); Wp[idx] += EPS
+        Wm = Wf.copy(); Wm[idx] -= EPS
+        dW_fd.ravel()[idx] = np.sum(((dw_fwd(Wp) - dw_fwd(Wm)) / (2 * EPS)) * dy)
+
+    # Claimed: per-channel `dW[c, kh, kw] = Σ_{i,j} x[c, i+kh-p, j+kw-p] * dy[c, i, j]`
+    dW_claimed = np.zeros_like(W)
+    for ch in range(c):
+        for kh in range(kH):
+            for kw in range(kW):
+                s = 0.0
+                for i in range(h):
+                    for j in range(w):
+                        ii, jj = i + kh - pad, j + kw - pad
+                        if 0 <= ii < h and 0 <= jj < w:
+                            s += x[ch, ii, jj] * dy[ch, i, j]
+                dW_claimed[ch, kh, kw] = s
+
+    err = np.max(np.abs(dW_fd - dW_claimed))
+    status = "PASS" if err < TOL else "FAIL"
+    print(f"  {status}: {'depthwise_weight_grad':30s} max_err={err:.2e}")
+    return err < TOL
+
+# ════════════════════════════════════════════════════════════════
 # SDPA backwards: sdpa_back_Q / sdpa_back_K / sdpa_back_V
 #
 # These mirror the concrete definitions in Attention.lean. We check
@@ -516,6 +625,8 @@ if __name__ == "__main__":
     results = []
     results.append(("Tensor.lean",  "pdiv_id",              True))  # trivial
     results.append(("MLP.lean",     "pdiv_dense",           test_dense()))
+    results.append(("MLP.lean",     "pdiv_dense_W",         test_dense_weight_grad()))
+    results.append(("MLP.lean",     "pdiv_dense_b",         test_dense_bias_grad()))
     results.append(("MLP.lean",     "pdiv_relu",            test_relu()))
     results.append(("MLP.lean",     "softmaxCE_grad",       test_softmax_ce()))
     results.append(("CNN.lean",     "conv2d_input_grad",    test_conv2d_input_grad_formula()))
@@ -530,6 +641,7 @@ if __name__ == "__main__":
     results.append(("Attention",    "sdpa_back_K",          test_sdpa_back_K()))
     results.append(("Attention",    "sdpa_back_V",          test_sdpa_back_V()))
     results.append(("Depthwise",    "depthwise_input_grad", test_depthwise_input_grad()))
+    results.append(("Depthwise",    "depthwise_weight_grad", test_depthwise_weight_grad()))
     try:
         results.append(("LayerNorm", "pdiv_gelu",           test_gelu()))
     except ImportError:

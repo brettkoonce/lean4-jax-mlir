@@ -99,7 +99,7 @@ noncomputable abbrev depthwiseConv2d_input_grad {c h w kH kW : Nat}
     (x : Tensor3 c h w) (dy : Tensor3 c h w) : Tensor3 c h w :=
   (depthwise_has_vjp3 W b).backward x dy
 
-/-! ### Depthwise weight gradient (codegen interface, not axiomatized here)
+/-! ### Depthwise weight gradient (Phase 7 — now axiomatized)
 
 Per-channel transpose trick:
 
@@ -120,10 +120,29 @@ MLIR (the depthwise variant of the transpose trick is in
 
     "For depthwise: dW[c,1,kH,kW] = sum_b input[b,c,:,:] conv grad[b,c,:,:]"
 
-**Why no axiom.** Same rationale as `conv2d`: the `HasVJP3` framework
-only covers input→output VJPs. Formal correctness for weight
-gradients awaits a parameterized variant. Documenting the formula
-here rather than introducing a vacuous shape-only axiom. -/
+**Framework.** Unlike the regular-conv weight gradient (which needs
+`Kernel4.flatten` because the kernel is 4D), the depthwise kernel
+`DepthwiseKernel c kH kW` is 3D — same shape as `Tensor3 c kH kW`, and
+in fact definitionally equal. So we can reuse the existing `HasVJP3`
+framework directly, parameterized over `W` instead of `x`. -/
+
+/-- **Depthwise weight-VJP** — bundled axiom using `HasVJP3` directly.
+
+    `DepthwiseKernel c kH kW` is definitionally `Tensor3 c kH kW`
+    (both `Fin c → Fin kH → Fin kW → ℝ`), so `HasVJP3` applies without
+    the Kernel4 flattening needed for the regular conv weight gradient.
+    The `.backward` is the per-channel transpose-trick formula documented
+    above, gradient-checked numerically in
+    `check_axioms.py:test_depthwise_weight_grad`. -/
+axiom depthwise_weight_grad_has_vjp3 {c h w kH kW : Nat}
+    (b : Vec c) (x : Tensor3 c h w) :
+    HasVJP3 (fun W : DepthwiseKernel c kH kW => depthwiseConv2d W b x)
+
+/-- Named accessor for the depthwise weight backward. -/
+noncomputable abbrev depthwiseConv2d_weight_grad {c h w kH kW : Nat}
+    (W : DepthwiseKernel c kH kW) (b : Vec c)
+    (x : Tensor3 c h w) (dy : Tensor3 c h w) : DepthwiseKernel c kH kW :=
+  (depthwise_weight_grad_has_vjp3 b x).backward W dy
 
 /-- **Bias gradient** — sum the cotangent over the spatial dims, per channel.
 
@@ -184,14 +203,15 @@ the same expressive power as a regular conv at a fraction of the FLOPs.
 
 - `depthwiseConv2d` — forward (black-box).
 - `depthwise_has_vjp3` — input-path VJP (function + correctness bundled).
+- `depthwise_weight_grad_has_vjp3` — Phase 7: the weight-path VJP,
+  bundled as `HasVJP3` directly (no flattening needed; see framework
+  note above). Gradient-checked numerically.
 
 Derived (not axioms):
-- `depthwiseConv2d_input_grad` — named accessor, `.backward` of the
-  corresponding `HasVJP3`.
-- `depthwiseConv2d_bias_grad` — concrete sum-over-spatial formula.
-
-Documented but not axiomatized:
-- Weight gradient (`dW`) — per-channel transpose-trick formula in
-  the section above. Awaits a parameterized VJP framework. -/
+- `depthwiseConv2d_input_grad`, `depthwiseConv2d_weight_grad` — named
+  accessors, `.backward` of the corresponding VJP.
+- `depthwiseConv2d_bias_grad` — concrete sum-over-spatial formula
+  (not formally tied to a `pdiv` since `depthwiseConv2d` is opaque
+  wrt `b`; cross-checked numerically instead). -/
 
 end Proofs
