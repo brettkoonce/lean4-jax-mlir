@@ -29,6 +29,10 @@ inductive Layer where
   | fireModule (ic squeeze expand1x1 expand3x3 : Nat)
   | patchEmbed (ic dim patchSize nPatches : Nat)
   | transformerEncoder (dim heads mlpDim nBlocks : Nat)
+  -- Selective state-space block (Mamba / S6); dim = hidden, stateSize = N,
+  -- expand = inner-dim multiplier. Not codegen-backed yet — used by the
+  -- Bestiary as a shape-only primitive for language-model architectures.
+  | mambaBlock (dim stateSize expand nBlocks : Nat)
 deriving Repr
 
 structure NetSpec where

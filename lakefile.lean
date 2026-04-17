@@ -146,4 +146,7 @@ lean_exe «test-codegen-ts» where
 lean_exe «bestiary-alphazero» where
   root := `Bestiary.AlphaZero
 
+lean_exe «bestiary-mamba» where
+  root := `Bestiary.Mamba
+
 require checkdecls from git "https://github.com/PatrickMassot/checkdecls.git"

@@ -91,6 +91,17 @@ def Layer.nParams : Layer → Nat
                     + (dim * mlpDim + mlpDim)
                     + (mlpDim * dim + dim)
       nBlocks * perBlock + 2 * dim
+  | .mambaBlock dim stateSize expand nBlocks =>
+      -- Approximate per-block count (Gu & Dao 2023 structure):
+      --   in_proj (D → 2·E·D) + out_proj (E·D → D): ~3·E·D²
+      --   SSM dt/B/C projections: ~3·E·D·N
+      --   depthwise 1D conv (kernel 4) + bias: ~5·E·D
+      --   RMSNorm γ: D
+      let perBlock := 3 * expand * dim * dim
+                    + 3 * expand * dim * stateSize
+                    + 5 * expand * dim
+                    + dim
+      nBlocks * perBlock
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
@@ -154,7 +165,8 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .uib ic oc e s pDW poDW => s!"UIB({ic}→{oc},e{e},s{s},dw{pDW}/{poDW})"
     | .fireModule ic sq e1 e3 => s!"Fire({ic}→{e1 + e3},sq{sq})"
     | .patchEmbed ic dim p _     => s!"Patch({ic}→{dim},{p}x{p})"
-    | .transformerEncoder dim h _ n => s!"Trans({n}x[{h}h,{dim}])")
+    | .transformerEncoder dim h _ n => s!"Trans({n}x[{h}h,{dim}])"
+    | .mambaBlock dim st exp n   => s!"Mamba{n}(dim={dim},state={st},exp={exp})")
 
 -- ===========================================================================
 -- Validation: catch channel/dimension mismatches at `lake build` time
@@ -176,6 +188,7 @@ def Layer.outChannels : Layer → Nat
   | .fireModule _ _ e1 e3           => e1 + e3
   | .patchEmbed _ dim _ _           => dim
   | .transformerEncoder dim _ _ _   => dim
+  | .mambaBlock dim _ _ _           => dim
   | _                               => 0  -- pool/flatten/GAP: pass-through
 
 /-- Input channels expected by a layer. Returns 0 for layers that accept any input. -/
@@ -194,6 +207,7 @@ def Layer.inChannels : Layer → Nat
   | .fireModule ic _ _ _            => ic
   | .patchEmbed ic _ _ _            => ic
   | .transformerEncoder dim _ _ _   => dim
+  | .mambaBlock dim _ _ _           => dim
   | _                               => 0  -- pool/flatten/GAP: accept anything
 
 /-- Validate that channel dimensions chain correctly through the spec.
@@ -220,6 +234,8 @@ def NetSpec.validate (s : NetSpec) : Option String := Id.run do
     | .globalAvgPool => afterGAP := true
     | .flatten       => afterFlatten := true
     | .transformerEncoder .. => afterTransformer := true
+    -- Mamba behaves like transformer for shape-chaining: (L, D) in, (L, D) out.
+    | .mambaBlock .. => afterTransformer := true
     | _ =>
       let oc := l.outChannels
       if oc > 0 then
