@@ -106,23 +106,31 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          leanblueprint pdf
+          mkdir -p blueprint/_diag
+          # Capture leanblueprint's own stdout+stderr — this is where any
+          # Python-level traceback or latex-error-report lives.
+          leanblueprint pdf > blueprint/_diag/leanblueprint.stdout.txt 2> blueprint/_diag/leanblueprint.stderr.txt
           status=$?
           echo "=========================================="
           echo "leanblueprint pdf exit status: $status"
           echo "=========================================="
+          echo "--- leanblueprint stdout (head 400) ---"
+          head -n 400 blueprint/_diag/leanblueprint.stdout.txt 2>/dev/null || true
+          echo "--- leanblueprint stderr (head 400) ---"
+          head -n 400 blueprint/_diag/leanblueprint.stderr.txt 2>/dev/null || true
           echo "--- blueprint/src contents ---"
           ls -la blueprint/src 2>/dev/null || true
           echo "--- blueprint/print contents ---"
           ls -la blueprint/print 2>/dev/null || true
           echo "--- blueprint top contents ---"
           ls -la blueprint 2>/dev/null || true
-          echo "--- latexmk log tail (blueprint/src/print.log) ---"
-          tail -n 200 blueprint/src/print.log 2>/dev/null || echo "no print.log"
-          echo "--- latexmk log tail (blueprint/print.log) ---"
-          tail -n 200 blueprint/print.log 2>/dev/null || echo "no blueprint/print.log"
-          echo "--- latexmk log tail (blueprint/src/print.fls) ---"
-          tail -n 80 blueprint/src/print.fls 2>/dev/null || echo "no print.fls"
+          # Try any .log we can find anywhere under blueprint/
+          echo "--- find *.log under blueprint/ ---"
+          find blueprint -name "*.log" 2>/dev/null || true
+          for f in $(find blueprint -name "*.log" 2>/dev/null); do
+            echo "--- tail 200 of $f ---"
+            tail -n 200 "$f" 2>/dev/null
+          done
           if [ $status -ne 0 ]; then
             echo "::warning::PDF build failed (status $status); web version still ships."
           fi
@@ -154,9 +162,17 @@ jobs:
           # Ship latex diagnostic artifacts so we can curl them from the
           # deployed Pages site without needing repo-admin log access.
           mkdir -p public/build-logs
-          cp blueprint/src/print.log  public/build-logs/print.log  2>/dev/null || true
-          cp blueprint/print/print.log public/build-logs/print.log 2>/dev/null || true
-          cp blueprint/src/print.fls  public/build-logs/print.fls  2>/dev/null || true
+          # leanblueprint's own stdout+stderr (Python-level errors land here).
+          cp blueprint/_diag/leanblueprint.stdout.txt public/build-logs/ 2>/dev/null || true
+          cp blueprint/_diag/leanblueprint.stderr.txt public/build-logs/ 2>/dev/null || true
+          # Any latex log/fls/aux/fdb that did get written.
+          for f in $(find blueprint -maxdepth 3 -type f \
+                       \( -name "*.log" -o -name "*.fls" -o -name "*.aux" \
+                          -o -name "*.fdb_latexmk" -o -name "*.blg" \) 2>/dev/null); do
+            # Flatten path for URL-friendliness: blueprint/print/print.log -> print__print.log
+            out="$(echo "$f" | sed 's|blueprint/||; s|/|__|g')"
+            cp "$f" "public/build-logs/$out" 2>/dev/null || true
+          done
           # Snapshot of what showed up where, in one grep-able file.
           {
             echo "--- ls blueprint ---"
@@ -167,6 +183,8 @@ jobs:
             ls -la blueprint/print 2>/dev/null || true
             echo "--- find blueprint *.pdf ---"
             find blueprint -name "*.pdf" -maxdepth 3 2>/dev/null || true
+            echo "--- find blueprint *.log ---"
+            find blueprint -name "*.log" -maxdepth 3 2>/dev/null || true
           } > public/build-logs/filesystem.txt
           # Keep the standalone graphviz DAG as an alt artifact
           cp LeanMlir/Proofs/blueprint.svg public/deps.svg 2>/dev/null || true
