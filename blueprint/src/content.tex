@@ -930,3 +930,12 @@ config; the architectural novelty is nonexistent. What makes NeRF work
 is the positional encoding + the volumetric-rendering loss ---
 both \emph{outside} the network, not layers in it. Variants:
 canonical (593K), fast (167K hidden=128), tiny fixture.
+
+\subsection*{CLIP (\texttt{Bestiary/CLIP.lean})}
+\emph{Zero} new primitives. Two textbook encoders glued together by a
+contrastive loss: a ResNet-50 or ViT-B for images, a 12-layer causal
+transformer for text, each with a final linear projection to a shared
+embedding space. Variants: CLIP-RN50, CLIP-ViT-B/32 (151M, paper-exact),
+CLIP-ViT-L/14 (427M, paper-exact), tiny fixture. The architectural
+lesson from CLIP is identical to NeRF's: the novelty lives in data and
+objective, not in layer design.
