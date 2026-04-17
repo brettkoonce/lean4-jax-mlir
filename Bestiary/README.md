@@ -13,6 +13,7 @@ like in ~20 lines of Lean."
 | `AlphaZero.lean` | AlphaZero / AlphaGo Zero | original Go, chess, tiny | Two-headed (policy + value) |
 | `Mamba.lean`     | Mamba (selective SSM)     | 130M / 370M / 790M / tiny | Language model, linear-time alternative to attention |
 | `SwinT.lean`     | Swin Transformer          | Swin-T / Swin-S / Swin-B / tiny | Hierarchical ViT, windowed + shifted attention |
+| `UNet.lean`      | UNet                      | original / RGB / small / tiny | Encoder-decoder with skip connections; diffusion backbone |
 
 ## Adding a new entry
 

@@ -118,6 +118,13 @@ def Layer.nParams : Layer → Nat
   | .patchMerging inDim outDim =>
       -- LN on concatenated 4·inDim + linear (4·inDim → outDim) + bias.
       (2 * 4 * inDim) + (4 * inDim * outDim + outDim)
+  | .unetDown ic oc =>
+      -- 2 × (conv3x3 + BN): ic→oc then oc→oc; maxPool adds zero params.
+      (9 * ic * oc + 2 * oc) + (9 * oc * oc + 2 * oc)
+  | .unetUp ic oc =>
+      -- Transposed-conv 2×2 upsample (ic→oc) + concat(2·oc) + 2 × (conv3x3 + BN)
+      -- 2oc→oc, then oc→oc.
+      (4 * ic * oc + oc) + (9 * 2 * oc * oc + 2 * oc) + (9 * oc * oc + 2 * oc)
   | _                        => 0
 
 def NetSpec.totalParams (s : NetSpec) : Nat :=
@@ -184,7 +191,9 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .transformerEncoder dim h _ n => s!"Trans({n}x[{h}h,{dim}])"
     | .mambaBlock dim st exp n   => s!"Mamba{n}(dim={dim},state={st},exp={exp})"
     | .swinStage dim h _ ws n    => s!"Swin{n}(dim={dim},heads={h},win={ws})"
-    | .patchMerging i o          => s!"PatchMerge({i}→{o})")
+    | .patchMerging i o          => s!"PatchMerge({i}→{o})"
+    | .unetDown ic oc            => s!"UNetDown({ic}→{oc})"
+    | .unetUp ic oc              => s!"UNetUp({ic}→{oc})")
 
 -- ===========================================================================
 -- Validation: catch channel/dimension mismatches at `lake build` time
@@ -209,6 +218,8 @@ def Layer.outChannels : Layer → Nat
   | .mambaBlock dim _ _ _           => dim
   | .swinStage dim _ _ _ _          => dim
   | .patchMerging _ outDim          => outDim
+  | .unetDown _ oc                  => oc
+  | .unetUp _ oc                    => oc
   | _                               => 0  -- pool/flatten/GAP: pass-through
 
 /-- Input channels expected by a layer. Returns 0 for layers that accept any input. -/
@@ -230,6 +241,8 @@ def Layer.inChannels : Layer → Nat
   | .mambaBlock dim _ _ _           => dim
   | .swinStage dim _ _ _ _          => dim
   | .patchMerging inDim _           => inDim
+  | .unetDown ic _                  => ic
+  | .unetUp ic _                    => ic
   | _                               => 0  -- pool/flatten/GAP: accept anything
 
 /-- Validate that channel dimensions chain correctly through the spec.

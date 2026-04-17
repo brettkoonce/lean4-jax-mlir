@@ -41,6 +41,14 @@ inductive Layer where
   -- (typically 4·inDim → 2·inDim in the paper, but `outDim` is stated
   -- explicitly to match any hierarchy).
   | patchMerging (inDim outDim : Nat)
+  -- UNet encoder stage: 2× (conv3x3 + BN + ReLU) + maxPool-2. Saves
+  -- the pre-pool feature map as a skip for the matching `unetUp` later.
+  | unetDown (ic oc : Nat)
+  -- UNet decoder stage: transposed-conv upsample + concat with the
+  -- matching encoder skip + 2× (conv3x3 + BN + ReLU). `ic` is the input
+  -- channel count (from the previous decoder or bottleneck); `oc` is
+  -- both the output channel count and the expected skip channel count.
+  | unetUp (ic oc : Nat)
 deriving Repr
 
 structure NetSpec where

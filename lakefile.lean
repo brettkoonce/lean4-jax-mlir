@@ -152,4 +152,7 @@ lean_exe «bestiary-mamba» where
 lean_exe «bestiary-swin» where
   root := `Bestiary.SwinT
 
+lean_exe «bestiary-unet» where
+  root := `Bestiary.UNet
+
 require checkdecls from git "https://github.com/PatrickMassot/checkdecls.git"
