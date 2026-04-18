@@ -107,11 +107,31 @@ jobs:
           python3 LeanMlir/Proofs/check_axioms.py
 
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Bestiary Entries" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Variants | Lines |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          total_variants=0
+          total_bestiary_lines=0
+          total_bestiary_files=0
+          for f in Bestiary/*.lean; do
+            base=$(basename "$f")
+            # Each `def X : NetSpec` is a variant (architecture + sizes + tiny fixtures)
+            variants=$(grep -cE '^def [a-zA-Z0-9_]+ : NetSpec' "$f" || true)
+            lines=$(wc -l < "$f")
+            echo "| \`${base}\` | ${variants} | ${lines} |" >> $GITHUB_STEP_SUMMARY
+            total_variants=$((total_variants + variants))
+            total_bestiary_lines=$((total_bestiary_lines + lines))
+            total_bestiary_files=$((total_bestiary_files + 1))
+          done
+          echo "| **Total (${total_bestiary_files} files)** | **${total_variants}** | **${total_bestiary_lines}** |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Codebase Statistics" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Files | Lines |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          for category in "Proofs:LeanMlir/Proofs/*.lean" "Core Library:LeanMlir/*.lean" "Trainers:Main*Train*.lean" "Tests:Test*.lean" "FFI (C):ffi/*.c ffi/*.h"; do
+          for category in "Proofs:LeanMlir/Proofs/*.lean" "Core Library:LeanMlir/*.lean" "Bestiary:Bestiary/*.lean" "Trainers:Main*Train*.lean" "Tests:Test*.lean" "FFI (C):ffi/*.c ffi/*.h"; do
             name="${category%%:*}"
             pattern="${category##*:}"
             files=$(ls $pattern 2>/dev/null | wc -l)
