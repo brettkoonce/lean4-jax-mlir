@@ -1600,6 +1600,25 @@ fixture. Reference implementation: Karpathy's \texttt{nanoGPT}
 ($\sim$300 lines of PyTorch) targets GPT-2 small and is the
 canonical mental model.
 
+\subsubsection*{Nyströmformer (\texttt{Bestiary/Nystromformer.lean})}
+\emph{Zero} new primitives. An efficient-attention transformer
+(Xiong et al.\ 2021) that replaces the $O(n^2)$ softmax attention
+with an $O(n)$ Nyström-approximation computed via $m$ landmark
+tokens, $m \ll n$. Crucially, this is a \emph{compute} change, not
+a parameter change: the $W_Q / W_K / W_V / W_O$ projections and the
+FFN are identical to a standard transformer. Our
+\texttt{.transformerEncoder} spec is therefore \emph{identical} to
+BERT's at each scale --- base lands at 108M (vs BERT-base 109M),
+large at 333M (vs BERT-large 335M). The entry's pedagogical value is
+prose-level: most of the 2020--2022 efficient-attention literature
+(Linformer, Performer, Longformer, BigBird, Reformer,
+FlashAttention) is parameter-identical to vanilla attention, and the
+bestiary can't differentiate them at the layer level. Nyströmformer
+is worth highlighting because the specific trick --- a 1928 result
+from numerical linear algebra, routed through kernel-method
+literature in the early 2000s, finally surfacing in transformers ---
+is a genuinely long arc for one math idea.
+
 \subsubsection*{WaveNet (\texttt{Bestiary/WaveNet.lean})}
 Uses \S~\ref{layer:waveNetBlock}. Dilated causal convolutions for raw
 audio sample prediction: exponential receptive field, linear parameter
