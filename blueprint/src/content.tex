@@ -1904,6 +1904,172 @@ at this scale.
   exactly one new axiom (\texttt{mhsa\_has\_vjp\_mat}).
 \end{theorem}
 
+\section{Example: ViT-Tiny on Imagenette}
+\label{sec:attention_vit_example}
+
+This is the capstone. Every layer proved in the preceding chapters
+--- dense, ReLU, softmax cross-entropy, convolution, maxPool,
+batch norm, residual, depthwise conv, squeeze-and-excitation, layer
+norm, GELU, and the attention mechanism itself --- composes into
+this one architecture. If the \texttt{NetSpec} below compiles and
+the VJP of its body is proved (\S~\ref{thm:vit_body_has_vjp_mat}),
+then every layer in modern deep learning you've seen in this book
+has its backward pass machine-checked.
+
+ViT-Tiny (Dosovitskiy et al.\ 2020) was the smallest Vision
+Transformer variant in the original paper. It's also the least
+data-hungry --- the big ViT variants start beating ConvNets at
+ImageNet-21K scale and above. On a 9469-image Imagenette training
+set, ViT-Tiny \emph{underperforms} the ResNet-34 / MobileNet V2 /
+EfficientNet-B0 from earlier chapters. That's part of the teaching
+point: transformers are not a universal improvement, they are a
+different scaling regime.
+
+\subsection*{The architecture}
+
+\begin{verbatim}
+-- 1
+import LeanMlir
+
+-- 2
+def vitTiny : NetSpec where
+  name   := "ViT-Tiny"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .patchEmbed 3 192 16 196,              -- (224/16)^2 = 196 patches
+    .transformerEncoder 192 3 768 12,      -- dim=192, 3 heads, mlp=768, 12 blocks
+    .dense 192 10 .identity                -- classification head
+  ]
+
+-- 3
+def vitTinyConfig : TrainConfig where
+  learningRate   := 0.0003     -- 3× smaller than the ConvNets
+  batchSize      := 32
+  epochs         := 80
+  useAdam        := true
+  weightDecay    := 0.0001
+  cosineDecay    := true
+  warmupEpochs   := 5          -- longer warmup too
+  augment        := true
+  labelSmoothing := 0.1
+
+-- 4
+def main (args : List String) : IO Unit :=
+  vitTiny.train vitTinyConfig (args.head?.getD "data/imagenette")
+\end{verbatim}
+
+Three layers. Literally three. The entire model body is
+\texttt{patchEmbed}, \texttt{transformerEncoder}, \texttt{dense}.
+\texttt{.patchEmbed 3 192 16 196} chops the $224 \times 224 \times 3$
+image into $14 \times 14 = 196$ non-overlapping $16 \times 16$
+patches, linear-projects each to 192 dimensions, and prepends a
+learned $\mathrm{CLS}$ token. \texttt{.transformerEncoder 192 3 768
+12} runs 12 standard encoder blocks (multi-head self-attention + MLP
++ LayerNorm + residual, twice per block). \texttt{.dense 192 10
+.identity} classifies off the CLS token. Every one of those sub-ops
+has its backward pass proved --- the composition of all of them is
+\S~\ref{thm:vit_body_has_vjp_mat}, the grand-finale theorem of Part
+1.
+
+Note the learning rate is 0.0003 (a third of what the ConvNets
+used) and warmup is 5 epochs (longer than the ConvNets' 3). ViTs
+famously need gentler optimization schedules --- the attention
+softmax is prone to collapse if gradients push logits too hard
+early, and warmup keeps the first few epochs slow enough to avoid
+that failure mode.
+
+\subsection*{Results}
+
+\begin{verbatim}
+$ IREE_BACKEND=rocm IREE_CHIP=gfx1100 \
+    ./.lake/build/bin/vit-tiny-train
+ViT-Tiny: 5526346 params
+Generating train step MLIR...
+  742145 chars
+Compiling vmfbs...
+  forward compiled
+  eval forward compiled
+  train step compiled
+  session loaded
+  train: 9469 images (256×256)
+  5526346 params + m + v (63 MB)
+training: 295 batches/epoch, batch=32, Adam, lr=0.000300,
+          cosine, label_smooth=0.1, wd=1e-4
+  no BN (LayerNorm only)
+  step 0/295: loss=2.302585 (366ms)
+Epoch 10/80: loss=1.552973 lr=0.000298 (102247ms)
+  val accuracy: 2121/3904 = 54.33%
+Epoch 20/80: loss=1.384668 lr=0.000275 (100662ms)
+  val accuracy: 2258/3904 = 57.84%
+Epoch 40/80: loss=1.178420 lr=0.000172 (102352ms)
+  val accuracy: 2642/3904 = 67.67%
+Epoch 60/80: loss=1.042742 lr=0.000054 (102175ms)
+  val accuracy: 2779/3904 = 71.18%
+Epoch 80/80: loss=0.986243 lr=0.000000 (102234ms)
+  val accuracy: 2799/3904 = 71.70%
+\end{verbatim}
+
+(Full log in \texttt{logs/vit\_train.log}.)
+
+Final val accuracy \textbf{71.70\%} on Imagenette, wall time
+\textbf{$\sim$2.3 hours} --- the fastest of any Imagenette-scale
+model in Part 1. Expanding the comparison table from the SE chapter:
+
+\begin{center}
+\begin{tabular}{l r r r r r}
+\hline
+Model            & Params  & MLIR     & Step time & Total   & Val acc \\
+\hline
+ResNet-34        & 21.29M  & 518 KB   & 1400 ms   & 9.5 h   & 90.29\% \\
+MobileNet V2     &  2.24M  & 741 KB   &  830 ms   & 5.4 h   & 87.09\% \\
+EfficientNet-B0  &  7.16M  & 938 KB   &  940 ms   & 6.2 h   & 87.58\% \\
+ViT-Tiny         &  5.53M  & 742 KB   &  360 ms   & 2.3 h   & 71.70\% \\
+\hline
+\end{tabular}
+\end{center}
+
+ViT-Tiny is the fastest-per-step and the lowest-accuracy. That's
+the data-hunger effect: 9469 training images is tiny for a
+transformer. The ViT paper reached ImageNet-competitive accuracy
+only when trained on ImageNet-21K (14M images) or JFT-300M (300M
+images); at Imagenette scale the ConvNets' inductive bias (locality,
+translation equivariance) actively helps, and the ViT has to learn
+those properties from data it doesn't have.
+
+That's not a problem with the framework, the proofs, or the ViT
+architecture --- it's the right answer. A book that claimed ``ViT
+always beats ResNet'' would be lying. A book that reports the real
+numbers and says ``ViT is a different scaling regime'' is doing
+honest pedagogy. The same proof framework that covers ResNet and
+MobileNet and EfficientNet also covers ViT; the same training
+recipe runs on all of them. What's different is the \emph{answer}
+you get, and why.
+
+\subsection*{What Part 1 has established}
+
+Every layer primitive shipped in the Phase 1--3 trainers (MLP,
+CNN, ResNet, MobileNet, EfficientNet, ViT) has a machine-checked
+backward pass. The same \texttt{NetSpec} / \texttt{TrainConfig} /
+\texttt{.train} pipeline trains all of them with at most
+config-level changes. The MLIR each emits is between 20\,KB (MLP)
+and 938\,KB (EfficientNet-B0), and IREE compiles all of them the
+same way.
+
+The bestiary in Part 2 then shows that \emph{every other
+architecture you've seen in modern deep learning} --- UNet, DETR,
+Mask R-CNN, DCGAN, CycleGAN, Pix2Pix, DDPM, Stable Diffusion, VAE,
+AlphaGo, AlphaZero, MuZero, Mamba, BERT, GPT, Whisper, CLIP, LLaVA,
+SAM, SegFormer, DeepLab v3+, Nyström-former, QANet, Evoformer ---
+composes from the same small set of primitives plus a handful of
+architecture-specific bundled layers. Three rules (chain, additive
+fan-in, multiplicative fan-in). Five Jacobian tricks (diagonal,
+sparse Toeplitz, binary selection, rank-1 correction, outer
+product). Thirty axioms. Forty-eight theorems. Zero sorrys.
+
+That's the whole framework. The rest of the book is picking
+architectures off the shelf.
+
 \chapter{Bestiary of Architectures}
 \label{chap:bestiary}
 
