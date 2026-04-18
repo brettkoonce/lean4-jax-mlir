@@ -206,4 +206,7 @@ lean_exe «bestiary-bert» where
 lean_exe «bestiary-shufflenetv2» where
   root := `Bestiary.ShuffleNetV2
 
+lean_exe «bestiary-gpt» where
+  root := `Bestiary.GPT
+
 require checkdecls from git "https://github.com/PatrickMassot/checkdecls.git"

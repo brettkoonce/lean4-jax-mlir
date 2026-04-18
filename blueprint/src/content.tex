@@ -1371,6 +1371,20 @@ RoBERTa = BERT; all RoBERTa gains came from training procedure
 (dynamic masking, more data, bigger batches, dropped NSP) --- none
 of which lives in the NetSpec.
 
+\subsection*{GPT-1 / GPT-2 (\texttt{Bestiary/GPT.lean})}
+Zero new primitives --- the decoder-only counterpart of BERT. Same
+\texttt{.transformerEncoder}, now read as a stack of decoder blocks
+with a causal attention mask (a training-time detail, not a
+parameter). No pooler; GPT-2 uses pre-norm instead of BERT's
+post-norm (zero-parameter swap). Weight tying: the LM head reuses
+the token-embedding matrix, so our \texttt{.dense vocab$\to$D}
+stand-in already pays for both input and output sides. Variants:
+GPT-1 (116M, paper 117M), GPT-2 small (123M, paper 124M), medium
+(353M), large (772M, paper 774M), XL (1.56B, paper 1.5B), tinyGPT
+fixture. Reference implementation: Karpathy's \texttt{nanoGPT}
+($\sim$300 lines of PyTorch) targets GPT-2 small and is the
+canonical mental model.
+
 \subsection*{WaveNet (\texttt{Bestiary/WaveNet.lean})}
 Uses \S~\ref{layer:waveNetBlock}. Dilated causal convolutions for raw
 audio sample prediction: exponential receptive field, linear parameter
