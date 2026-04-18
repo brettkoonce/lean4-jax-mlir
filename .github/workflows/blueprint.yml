@@ -79,11 +79,15 @@ jobs:
                      LeanMlir.Proofs.SE LeanMlir.Proofs.LayerNorm \
                      LeanMlir.Proofs.Attention
 
-      - name: Cache graphviz (small, fast to restore)
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: graphviz libgraphviz-dev pkg-config
-          version: 1
+      - name: Install graphviz (system-wide so output-format plugins register)
+        # cache-apt-pkgs-action caches the graphviz binaries but skips the
+        # postinst that runs `dot -c` to register output-format plugins
+        # (PDF, PNG, SVG, etc.). Without that, `dot -Tsvg` errors with
+        # "Format svg not recognized". Same fix as TeX below — plain
+        # apt-get install lands the files under /usr/ and runs postinst.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz libgraphviz-dev pkg-config
 
       - name: Install TeX Live (system-wide so postinst runs properly)
         # cache-apt-pkgs-action installs into ~/.aptcache/ (user-local
