@@ -100,6 +100,7 @@ procedure, and the bestiary entry exists to make that point.
 | `BERT.lean`      | BERT / RoBERTa            | base / large × 2 + tiny | Encoder-only transformer; RoBERTa = BERT architecturally |
 | `GPT.lean`       | GPT-1 / GPT-2             | GPT-1 + GPT-2 small/med/large/XL + tiny | Decoder-only transformer; BERT with a causal mask and tied LM head |
 | `Nystromformer.lean` | Nyströmformer         | base / large + tiny | O(n) attention via 1928 Nyström trick; same params as BERT, different compute |
+| `QANet.lean`     | QANet                     | encoder block / 7-block stack / tiny | SQuAD-era reading comp; conv + attention hybrid 4 years before MobileViT |
 | `WaveNet.lean`   | WaveNet                   | speech / 3-stack / music / tiny | Dilated causal convs for audio; exponential receptive field |
 | `Whisper.lean`   | Whisper                   | tiny / base / small / medium / large + decoder + tiny | Audio → text encoder-decoder transformer; multitask via token prefix |
 | `NeRF.lean`      | NeRF                      | canonical / fast / tiny | 3D scene as an MLP; the magic is in positional encoding |

@@ -251,4 +251,7 @@ lean_exe «bestiary-pix2pix» where
 lean_exe «bestiary-nystromformer» where
   root := `Bestiary.Nystromformer
 
+lean_exe «bestiary-qanet» where
+  root := `Bestiary.QANet
+
 require checkdecls from git "https://github.com/PatrickMassot/checkdecls.git"

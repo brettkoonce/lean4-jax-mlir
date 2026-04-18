@@ -1600,6 +1600,27 @@ fixture. Reference implementation: Karpathy's \texttt{nanoGPT}
 ($\sim$300 lines of PyTorch) targets GPT-2 small and is the
 canonical mental model.
 
+\subsubsection*{QANet (\texttt{Bestiary/QANet.lean})}
+\emph{Zero} new primitives. The 2018 reading-comprehension
+architecture (Yu et al.) that killed the BiLSTM for SQuAD-style
+tasks. Core contribution: an encoder block combining 4 depthwise-
+separable convs (local context) with a self-attention + FFN
+transformer block (global context) --- the ``conv + attention
+hybrid'' shape MobileViT and ConvNeXt rediscovered in 2022.
+Expressed with primitives we already have: 4
+\texttt{.separableConv 128 128 1} calls + 1
+\texttt{.transformerEncoder 128 8 512 1} per block. Per-block count:
+$\sim$270K; the paper's model encoder stack (7 blocks) lands at
+$\sim$1.9M, repeated 3 times in the full architecture. The BiDAF-
+style context-query attention and character/word embedding tables
+are omitted from the spec; described in prose. QANet's headline
+number was \textbf{3--4$\times$ training speedup} over BiLSTM-based
+competitors, a clean example of hardware (parallelization of convs
+vs. sequential RNN roll-outs) forcing an architectural choice.
+BERT landing 7 months later ended the SQuAD-as-benchmark era, but
+QANet's hybrid shape lived on --- showed up repeatedly in vision
+4 years later.
+
 \subsubsection*{Nyströmformer (\texttt{Bestiary/Nystromformer.lean})}
 \emph{Zero} new primitives. An efficient-attention transformer
 (Xiong et al.\ 2021) that replaces the $O(n^2)$ softmax attention
