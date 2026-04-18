@@ -37,8 +37,19 @@ jobs:
           fetch-depth: 0
 
       - name: Install elan (Lean toolchain manager)
+        # GitHub's release server intermittently returns 504 when fetching
+        # the elan tarball; retry up to 3× with a 10 s backoff before
+        # declaring failure.
         run: |
-          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- --default-toolchain none -y
+          for attempt in 1 2 3; do
+            if curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- --default-toolchain none -y; then
+              echo "elan installed on attempt $attempt"
+              break
+            fi
+            echo "::warning::elan install failed (attempt $attempt/3), retrying in 10 s..."
+            sleep 10
+          done
+          test -x "$HOME/.elan/bin/elan" || { echo "::error::elan install failed after 3 attempts"; exit 1; }
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Cache .lake (Mathlib oleans + our build products)
