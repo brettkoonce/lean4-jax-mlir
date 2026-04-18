@@ -1365,6 +1365,28 @@ showing the architectural shape, not an exact param match. The
 lesson is the same one CLIP and NeRF taught: the novelty lives in
 the training procedure, not in layer design.
 
+\subsection*{Stable Diffusion (\texttt{Bestiary/StableDiffusion.lean})}
+\emph{Zero} new primitives. The paper that made generative image
+models consumer-reachable (Rombach et al.\ 2022). Two architectural
+moves over DDPM, each individually small: (a) \emph{latent diffusion}
+--- run the diffusion process on 64$\times$64$\times$4 VAE latents
+instead of 512$\times$512 pixels, cutting spatial work $\sim$64$\times$;
+(b) \emph{text conditioning via cross-attention} --- at each interior
+UNet resolution, insert a spatial transformer block that cross-attends
+from image tokens to CLIP text embeddings. Shown as six separate
+NetSpecs: VAE encoder, VAE decoder, CLIP text encoder (123M, matches
+CLIP ViT-L/14 exactly), UNet backbone (202M backbone approx; real
+SD 1.5 UNet is 865M, missing $\sim$650M is the interleaved
+cross-attention), an explicit spatial-transformer-block spec (uses
+\texttt{.transformerDecoder} with \texttt{nQueries = 0} --- same
+primitive Whisper's decoder uses, same mechanism as DETR's decoder
+applied at image-feature resolution), and a tiny end-to-end fixture.
+Three components are pretrained and frozen during SD's main training
+(VAE + text encoder) or constrained-frozen
+(CLIP); only the UNet trains. SDXL scales the UNet to 2.6B; SD 3
+switches the UNet for a DiT transformer. The latent-diffusion plus
+text-conditioning template is the same.
+
 \subsection*{\textmd{\textsc{Group V.}} Reinforcement learning}
 
 Two-headed (policy + value) networks wrapped in a self-play + MCTS

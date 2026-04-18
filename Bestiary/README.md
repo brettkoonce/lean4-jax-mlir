@@ -65,6 +65,7 @@ it becomes a plausible sample from a learned distribution.
 | File | Architecture | Variants | Notes |
 |------|--------------|----------|-------|
 | `Diffusion.lean` | DDPM                   | CIFAR / 256 / tiny + timestep-embed | Denoising diffusion; the denoiser IS a UNet, rest is training loop |
+| `StableDiffusion.lean` | Stable Diffusion 1.5 | VAE enc/dec + text enc + UNet + spatial-transformer + tiny | Latent diffusion + text cross-attention; 3 pretrained components, 1 trained |
 
 ## Reinforcement learning
 
