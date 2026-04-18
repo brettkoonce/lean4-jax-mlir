@@ -1327,7 +1327,31 @@ pairs with the $i$-th \texttt{unetDown} from the top. Variants:
 original (1-channel, 2-class), RGB, small, tiny. Original lands at 31M
 params matching Ronneberger.
 
-\subsection*{\textmd{\textsc{Group IV.}} Reinforcement learning}
+\subsection*{\textmd{\textsc{Group IV.}} Image generation}
+
+Networks whose output is a novel image. Backbones overlap heavily with
+segmentation (UNet again), but the training objective is generative:
+denoise a random input until it becomes a plausible sample.
+
+\subsection*{DDPM (\texttt{Bestiary/Diffusion.lean})}
+\emph{Zero} new primitives. The denoiser is a UNet --- literally the
+same \S~\ref{layer:unetDown} and \S~\ref{layer:unetUp} Ronneberger
+shipped in 2015. Everything ``diffusion'' lives in the training loop:
+a forward noise schedule adds Gaussian noise over $T$ steps, a reverse
+process learns to predict the added noise, sampling iterates the
+reverse from pure noise back to a clean image. None of that is a
+layer. The timestep conditioning MLP (sinusoidal $\to$ dense $\to$
+dense) is shown as a standalone \texttt{NetSpec} that reuses
+\texttt{positionalEncoding} from NeRF. Variants: CIFAR config (32x32
+backbone), 256x256 high-res config, tiny fixture, timestep embed.
+Our simplified backbone undercounts vs paper (paper DDPM adds
+residual blocks, GroupNorm, attention-at-low-res, and per-block
+time-embedding projection on top of the UNet); the spec's value is
+showing the architectural shape, not an exact param match. The
+lesson is the same one CLIP and NeRF taught: the novelty lives in
+the training procedure, not in layer design.
+
+\subsection*{\textmd{\textsc{Group V.}} Reinforcement learning}
 
 Two-headed (policy + value) networks wrapped in a self-play + MCTS
 outer loop. The architectural side is a stack of residual CNN blocks;
@@ -1347,7 +1371,7 @@ factoring, not any single layer type. Five \texttt{NetSpec} values per
 variant (rep, dyn body, dyn reward head, pred policy, pred value).
 Variants: Go, Atari (representation only), tiny.
 
-\subsection*{\textmd{\textsc{Group V.}} Beyond vision}
+\subsection*{\textmd{\textsc{Group VI.}} Beyond vision}
 
 Architectures where the task domain is not a 2D image: language,
 audio, 3D scene reconstruction, multimodal embedding, scientific.

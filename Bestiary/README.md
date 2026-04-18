@@ -54,6 +54,17 @@ is the recurring pattern; UNet is the canonical instance.
 |------|--------------|----------|-------|
 | `UNet.lean`      | UNet                      | original / RGB / small / tiny | Encoder-decoder with skip connections; diffusion backbone |
 
+## Image generation
+
+Networks whose output is a novel image, not a label. The backbones
+overlap heavily with segmentation (UNet shows up everywhere), but
+the training objective is generative: denoising a random input until
+it becomes a plausible sample from a learned distribution.
+
+| File | Architecture | Variants | Notes |
+|------|--------------|----------|-------|
+| `Diffusion.lean` | DDPM                   | CIFAR / 256 / tiny + timestep-embed | Denoising diffusion; the denoiser IS a UNet, rest is training loop |
+
 ## Reinforcement learning
 
 Two-headed (policy + value) networks wrapped in a self-play / MCTS
