@@ -218,4 +218,7 @@ lean_exe «bestiary-sam» where
 lean_exe «bestiary-whisper» where
   root := `Bestiary.Whisper
 
+lean_exe «bestiary-llava» where
+  root := `Bestiary.LLaVA
+
 require checkdecls from git "https://github.com/PatrickMassot/checkdecls.git"

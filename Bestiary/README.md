@@ -94,6 +94,7 @@ procedure, and the bestiary entry exists to make that point.
 | `Whisper.lean`   | Whisper                   | tiny / base / small / medium / large + decoder + tiny | Audio → text encoder-decoder transformer; multitask via token prefix |
 | `NeRF.lean`      | NeRF                      | canonical / fast / tiny | 3D scene as an MLP; the magic is in positional encoding |
 | `CLIP.lean`      | CLIP                      | RN50 / ViT-B/32 / ViT-L/14 / tiny | Dual encoder + contrastive; zero new primitives |
+| `LLaVA.lean`     | LLaVA / LLaVA-1.5         | ViT-L + projector × 2 + LM 7B/13B + tiny | Frozen CLIP + MLP projector + LLaMA; projector is 0.3% of total |
 | `Evoformer.lean` | AlphaFold 2 Evoformer     | full / mini / tiny | Dual-representation (MSA + pair) via triangle updates |
 
 ## Adding a new entry

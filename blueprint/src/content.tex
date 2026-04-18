@@ -1468,6 +1468,24 @@ CLIP-ViT-L/14 (427M, paper-exact), tiny fixture. The architectural
 lesson from CLIP is identical to NeRF's: the novelty lives in data and
 objective, not in layer design.
 
+\subsection*{LLaVA / LLaVA-1.5 (\texttt{Bestiary/LLaVA.lean})}
+\emph{Zero} new primitives. The cleanest exhibit of the modern
+vision-language pattern: frozen CLIP ViT encoder + small MLP
+projector + (mostly) frozen LLaMA/Vicuna language model. Trained in
+two stages --- projector-only pretrain, then joint instruction fine-
+tune. Shown as separate NetSpecs per component: vision encoder
+(303M, matching CLIP ViT-L/14), LLaVA-1 single-linear projector
+(4M), LLaVA-1.5 two-layer MLP projector (21M), LLM backbones at 7B
+and 13B. The LLM specs undercount real LLaMA by $\sim$23\% because
+our \texttt{.transformerEncoder} uses a standard 2-projection FFN
+while LLaMA uses SwiGLU (3 projections); depth / width / heads still
+match. Key ratio: the projector is \textbf{0.3\%} of total LLaVA-1.5
+7B parameters --- the entire interesting work of the model lives in
+~21M of trainable bolt-on between two pretrained backbones. BLIP-2,
+Flamingo, and every modern VLM demo generalize this template with
+fancier adapters (Q-Former, Perceiver resampler, gated xattn-dense),
+but the frozen-backbone-plus-adapter shape is the same.
+
 \subsection*{AlphaFold 2 Evoformer (\texttt{Bestiary/Evoformer.lean})}
 Uses \S~\ref{layer:evoformerBlock} and \S~\ref{layer:structureModule}.
 Dual-representation (MSA + pair) doesn't fit a linear \texttt{NetSpec}
