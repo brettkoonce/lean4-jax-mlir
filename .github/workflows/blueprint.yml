@@ -135,13 +135,18 @@ jobs:
         run: |
           pip install leanblueprint
 
-      - name: Build Lean API docs (doc-gen4)
-        # Generates HTML documentation for the Lean library + its transitive
-        # imports (Mathlib, etc.). Output lands at .lake/build/doc/. Manifest
-        # was already regenerated with -Kenv=dev earlier in the workflow,
-        # so this is just the build.
-        run: |
-          lake -R -Kenv=dev build LeanMlir:docs
+      # Build Lean API docs (doc-gen4) — DISABLED for now.
+      # Generates HTML for every transitive Mathlib declaration (~70K),
+      # takes 20-30 min per run, deploy size goes to multi-GB. We've
+      # verified the pipeline works end-to-end (fbf0d75 → 951e2ef); the
+      # `\dochome` links in the blueprint point at /docs/ and will 404
+      # until this step is re-enabled. Re-enable by uncommenting below
+      # (consider also adding external-refs-to-Mathlib config to skip
+      # regenerating Mathlib docs we don't host).
+      #
+      # - name: Build Lean API docs (doc-gen4)
+      #   run: |
+      #     lake -R -Kenv=dev build LeanMlir:docs
 
       - name: Build blueprint web version
         run: |
