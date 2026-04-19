@@ -248,7 +248,9 @@ layers, convolution, and normalization. The second half climbs the
 ladder to ViT.
 
 \begin{itemize}
-  \item \textbf{Chapter 2: Tensor Calculus} --- Axioms.
+  \item \textbf{Chapter 2: The backward pass: axioms} --- Chain rule, sum
+    rule, product rule for partial derivatives. Every backward function in
+    the book is a VJP (vector-Jacobian product) built by composing these.
   \item \textbf{Chapter 3: MNIST 1D MLP} --- Dense layers, ReLU, softmax CE,
     the chain rule. The most important chapter: everything after is
     adding more layers.
@@ -306,7 +308,7 @@ and decides to see how far they can go.
 
 Let's find out.
 
-\chapter{Tensor: Calculus Foundations}
+\chapter{The backward pass: axioms}
 \label{chap:tensor}
 
 The algebraic framework: 1D \(\mathsf{Vec}\), 2D \(\mathsf{Mat}\), 3D
