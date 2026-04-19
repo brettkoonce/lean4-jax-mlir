@@ -1564,7 +1564,9 @@ After warmup, the learning rate decays from its peak to near-zero
 following $\mathrm{lr}(t) = \mathrm{lr}_{\max} \cdot \tfrac{1}{2}(1 +
 \cos(\pi t / T))$. Smoother than step schedules; consistently produces
 slightly better final losses in practice. Paired with warmup, this was
-the winning recipe at Stanford's DAWNBench in 2018.
+the winning recipe at Stanford's DAWNBench in 2018; the lineage traces
+back to Leslie Smith's cyclical learning rates (Smith 2015,
+\href{https://arxiv.org/abs/1506.01186}{arXiv:1506.01186}).
 
 \textbf{Warmup}. Linearly ramps the learning rate from zero to its
 peak over the first few epochs (3 for ResNet-34). Stabilizes early
