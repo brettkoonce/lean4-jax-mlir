@@ -2959,7 +2959,8 @@ def yolo : NetSpec where
 
 \subsubsection*{Mask R-CNN (\texttt{Bestiary/MaskRCNN.lean})}
 \emph{One} new primitive (\S~\ref{layer:fpnModule}). The canonical two-stage detector +
-instance segmentation reference (He et al.\ 2017). Five architectural
+instance segmentation reference (He et al.\ 2017,
+\href{https://arxiv.org/abs/1703.06870}{arXiv:1703.06870}). Five architectural
 pieces: ResNet-FPN backbone, RPN for anchor-box proposals, ROI-Align
 for per-proposal feature extraction (an orchestration step, not a
 layer), a 2-layer FC box head for classification + bbox regression,
@@ -3053,7 +3054,8 @@ def unet : NetSpec where
 
 \subsubsection*{DeepLab v3+ (\texttt{Bestiary/DeepLabV3Plus.lean})}
 \emph{One} new primitive (\S~\ref{layer:asppModule}). The pre-transformer segmentation
-workhorse (Chen et al.\ 2018) --- still deployed widely in remote
+workhorse (Chen et al.\ 2018,
+\href{https://arxiv.org/abs/1802.02611}{arXiv:1802.02611}) --- still deployed widely in remote
 sensing, medical imaging, and autonomous-driving perception
 pipelines. Two ideas: atrous (dilated) convolutions in the
 backbone's last stage (param-count-free receptive-field expansion)
@@ -3129,7 +3131,7 @@ def segformerB2 : NetSpec where
 
 \subsubsection*{SAM (\texttt{Bestiary/SAM.lean})}
 \emph{Zero} new primitives. Promptable segmentation (Kirillov et
-al.\ 2023): a ViT image encoder runs once per image, a tiny prompt
+al.\ 2023, \href{https://arxiv.org/abs/2304.02643}{arXiv:2304.02643}): a ViT image encoder runs once per image, a tiny prompt
 encoder tokenizes clicks / boxes / masks, a lightweight transformer
 mask decoder cross-attends between image tokens, prompt tokens, and
 a handful of learned output queries. Image encoder is
@@ -3161,7 +3163,7 @@ denoise a random input until it becomes a plausible sample.
 
 \subsubsection*{VAE (\texttt{Bestiary/VAE.lean})}
 \emph{Zero} new primitives. The classical variational autoencoder
-(Kingma \& Welling 2013): encoder outputs
+(Kingma \& Welling 2013, \href{https://arxiv.org/abs/1312.6114}{arXiv:1312.6114}): encoder outputs
 $(\mu, \log \sigma^2)$ (represented as a single tensor with doubled
 final width), the reparameterization trick
 $z = \mu + \sigma \odot \epsilon$ samples $z$ in training code, the
@@ -3192,7 +3194,7 @@ def mnistVAEEncoder : NetSpec where
 
 \subsubsection*{DCGAN (\texttt{Bestiary/DCGAN.lean})}
 \emph{Zero} new primitives. Deep Convolutional GAN (Radford et
-al.\ 2015) --- the paper that made GAN training reliably work. Eight
+al.\ 2015, \href{https://arxiv.org/abs/1511.06434}{arXiv:1511.06434}) --- the paper that made GAN training reliably work. Eight
 design guidelines (strided convs instead of pooling, BN everywhere
 except $G$'s output / $D$'s input, no hidden FC layers, ReLU in $G$
 / LeakyReLU in $D$, Adam with specific hyperparams) that became the
@@ -3223,7 +3225,8 @@ def dcganGenerator : NetSpec where
 
 \subsubsection*{Pix2Pix (\texttt{Bestiary/Pix2Pix.lean})}
 \emph{Zero} new primitives. The paired-data ancestor of CycleGAN,
-from the same lab 9 months earlier (Isola et al.\ 2017). UNet
+from the same lab 9 months earlier (Isola et al.\ 2017,
+\href{https://arxiv.org/abs/1611.07004}{arXiv:1611.07004}). UNet
 generator (8 levels, $\sim$70M approx vs paper $\sim$54M --- our
 \texttt{.unetDown} / \texttt{.unetUp} use 2 convs per level where
 Pix2Pix uses 1 strided conv, so we overcount) + PatchGAN
@@ -3257,7 +3260,7 @@ def pix2pixGenerator : NetSpec where
 
 \subsubsection*{CycleGAN (\texttt{Bestiary/CycleGAN.lean})}
 \emph{Zero} new primitives. Unpaired image translation (Zhu et
-al.\ 2017): two generators $G : X \to Y$ and $F : Y \to X$ plus two
+al.\ 2017, \href{https://arxiv.org/abs/1703.10593}{arXiv:1703.10593}): two generators $G : X \to Y$ and $F : Y \to X$ plus two
 PatchGAN discriminators, trained with adversarial loss + cycle
 consistency loss $\|F(G(x)) - x\|_1$. The cycle constraint is what
 makes unpaired training work --- without it, $G$ could mode-collapse
@@ -3324,7 +3327,8 @@ def ddpmCifar : NetSpec where
 
 \subsubsection*{Stable Diffusion (\texttt{Bestiary/StableDiffusion.lean})}
 \emph{Zero} new primitives. The paper that made generative image
-models consumer-reachable (Rombach et al.\ 2022). Two architectural
+models consumer-reachable (Rombach et al.\ 2022,
+\href{https://arxiv.org/abs/2112.10752}{arXiv:2112.10752}). Two architectural
 moves over DDPM, each individually small: (a) \emph{latent diffusion}
 --- run the diffusion process on 64$\times$64$\times$4 VAE latents
 instead of 512$\times$512 pixels, cutting spatial work $\sim$64$\times$;
@@ -3523,7 +3527,9 @@ def gpt2Small : NetSpec where
 
 \subsubsection*{QANet (\texttt{Bestiary/QANet.lean})}
 \emph{Zero} new primitives. The 2018 reading-comprehension
-architecture (Yu et al.) that killed the BiLSTM for SQuAD-style
+architecture (Yu et al.\ 2018,
+\href{https://arxiv.org/abs/1804.09541}{arXiv:1804.09541}) that killed
+the BiLSTM for SQuAD-style
 tasks. Core contribution: an encoder block combining 4 depthwise-
 separable convs (local context) with a self-attention + FFN
 transformer block (global context) --- the ``conv + attention
@@ -3560,7 +3566,9 @@ def qanetEncoderBlock : NetSpec where
 
 \subsubsection*{Nyströmformer (\texttt{Bestiary/Nystromformer.lean})}
 \emph{Zero} new primitives. An efficient-attention transformer
-(Xiong et al.\ 2021) that replaces the $O(n^2)$ softmax attention
+(Xiong et al.\ 2021,
+\href{https://arxiv.org/abs/2102.03902}{arXiv:2102.03902}) that
+replaces the $O(n^2)$ softmax attention
 with an $O(n)$ Nyström-approximation computed via $m$ landmark
 tokens, $m \ll n$. Crucially, this is a \emph{compute} change, not
 a parameter change: the $W_Q / W_K / W_V / W_O$ projections and the
@@ -3618,7 +3626,8 @@ def waveNet : NetSpec where
 
 \subsubsection*{Whisper (\texttt{Bestiary/Whisper.lean})}
 \emph{Zero} new primitives. Encoder-decoder transformer over log-mel
-spectrograms (Radford et al.\ 2022). Encoder is
+spectrograms (Radford et al.\ 2022,
+\href{https://arxiv.org/abs/2212.04356}{arXiv:2212.04356}). Encoder is
 \texttt{.transformerEncoder} on the 1500 post-stem audio tokens;
 decoder is \texttt{.transformerDecoder} (from DETR) with
 \texttt{nQueries = 0} --- a clean seq2seq decoder with self-attn +
