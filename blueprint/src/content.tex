@@ -3290,7 +3290,8 @@ al.\ 2017, \href{https://arxiv.org/abs/1703.10593}{arXiv:1703.10593}): two gener
 PatchGAN discriminators, trained with adversarial loss + cycle
 consistency loss $\|F(G(x)) - x\|_1$. The cycle constraint is what
 makes unpaired training work --- without it, $G$ could mode-collapse
-every $x$ to one target. Generator is a Johnson-style ResNet:
+every $x$ to one target. Generator is a Johnson-style ResNet (Johnson et al.\ 2016,
+\href{https://arxiv.org/abs/1603.08155}{arXiv:1603.08155}):
 convs down + 9 \texttt{.residualBlock}s at 256 channels + convs up
 (11.4M, paper $\sim$11M). Discriminator is a PatchGAN: 5 strided
 convs with a $70 \times 70$ receptive field, outputs an $N \times N$
