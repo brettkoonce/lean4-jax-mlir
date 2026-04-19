@@ -933,6 +933,9 @@ slice the current epoch's images and labels, concatenate
 \emph{everything}: forward pass through every layer, cross-entropy
 loss, backward pass (the VJP of every layer you've proved in
 earlier sections), Adam update of parameters and moment buffers.
+Whether that update is Adam or plain SGD + momentum is baked into
+the vmfb at codegen time by \texttt{cfg.useAdam} (step~1); the call
+name stays \texttt{trainStepAdamF32} either way.
 All of it executes as one pre-compiled \texttt{stablehlo} vmfb on
 the GPU. The framework unpacks the updated \texttt{(p, m, v)} from
 the output buffer and loops.
