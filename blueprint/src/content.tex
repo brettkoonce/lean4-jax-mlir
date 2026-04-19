@@ -1947,27 +1947,6 @@ at this scale.
 \chapter{LayerNorm and GELU}
 \label{chap:layernorm}
 
-Two primitives transformers need that CNNs don't.
-
-\textbf{LayerNorm} (Ba, Kiros, Hinton 2016,
-\href{https://arxiv.org/abs/1607.06450}{arXiv:1607.06450}) is BatchNorm
-on a different axis: normalizes per-sample across the feature dimension
-rather than per-feature across a batch. Sidesteps BN's small-batch /
-variable-sequence-length failure mode, which is why every transformer
-uses it instead. The proof is the same three-term Jacobian cancellation
-BN uses (Chapter~\ref{chap:batchnorm}) applied to a different axis; see
-\S~\ref{thm:layerNorm_has_vjp}.
-
-\textbf{GELU} (Hendrycks \& Gimpel 2016,
-\href{https://arxiv.org/abs/1606.08415}{arXiv:1606.08415}) is a smooth
-approximation of ReLU: $\mathrm{GELU}(x) = x \cdot \Phi(x)$ where
-$\Phi$ is the standard-normal CDF. Differentiable everywhere; the
-``soft gate'' behavior near zero is a measurable accuracy improvement
-in transformers. Diagonal activation Jacobian, same axiom family as
-ReLU.
-
-Chapter~\ref{chap:attention} uses both to define ViT.
-
 \begin{axiom}[GELU scalar function]
   \label{ax:geluScalar}
   \lean{Proofs.geluScalar}
@@ -2002,6 +1981,27 @@ Chapter~\ref{chap:attention} uses both to define ViT.
   \leanok
   \uses{ax:pdiv_gelu}
 \end{theorem}
+
+Two primitives transformers need that CNNs don't.
+
+\textbf{LayerNorm} (Ba, Kiros, Hinton 2016,
+\href{https://arxiv.org/abs/1607.06450}{arXiv:1607.06450}) is BatchNorm
+on a different axis: normalizes per-sample across the feature dimension
+rather than per-feature across a batch. Sidesteps BN's small-batch /
+variable-sequence-length failure mode, which is why every transformer
+uses it instead. The proof is the same three-term Jacobian cancellation
+BN uses (Chapter~\ref{chap:batchnorm}) applied to a different axis; see
+\S~\ref{thm:layerNorm_has_vjp}.
+
+\textbf{GELU} (Hendrycks \& Gimpel 2016,
+\href{https://arxiv.org/abs/1606.08415}{arXiv:1606.08415}) is a smooth
+approximation of ReLU: $\mathrm{GELU}(x) = x \cdot \Phi(x)$ where
+$\Phi$ is the standard-normal CDF. Differentiable everywhere; the
+``soft gate'' behavior near zero is a measurable accuracy improvement
+in transformers. Diagonal activation Jacobian, same axiom family as
+ReLU.
+
+Chapter~\ref{chap:attention} uses both to define ViT.
 
 \chapter{Attention and the ViT finale}
 \label{chap:attention}
