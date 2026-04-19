@@ -2602,7 +2602,9 @@ it to work.
 
 \subsubsection*{LeNet (\texttt{Bestiary/LeNet.lean})}
 \emph{Zero} new primitives --- just \texttt{conv2d} $+$ \texttt{maxPool}
-$+$ \texttt{dense}. The 1998 original. Variants: LeNet-5 (61K params,
+$+$ \texttt{dense}. The 1998 original (LeCun et al.\ 1998,
+\href{http://yann.lecun.com/exdb/publis/pdf/lecun-98.pdf}{IEEE 1998}).
+Variants: LeNet-5 (61K params,
 the canonical CNN) and LeNet-300-100 (266K params, pure-MLP baseline).
 Historical importance; still the ground-truth pattern every later CNN
 riffs on.
@@ -2626,7 +2628,8 @@ def leNet5 : NetSpec where
 
 \subsubsection*{AlexNet (\texttt{Bestiary/AlexNet.lean})}
 \emph{Zero} new primitives --- five convs, three FCs, pools. The 2012
-ImageNet winner that restarted modern deep learning. Variants:
+ImageNet winner that restarted modern deep learning (Krizhevsky et al.\ 2012,
+\href{https://papers.nips.cc/paper_files/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html}{NeurIPS 2012}). Variants:
 AlexNet (62M, paper-exact at 60M) + tiny CIFAR fixture. $\sim$58M of
 the 62M live in the three FC layers, which is precisely why every
 post-2015 CNN dropped FC stacks for \texttt{globalAvgPool} + one final
@@ -2657,7 +2660,8 @@ def alexNet : NetSpec where
 \subsubsection*{SqueezeNet (\texttt{Bestiary/SqueezeNet.lean})}
 \emph{Zero} new primitives --- the \texttt{.fireModule} constructor was
 already in \texttt{Types.lean}. AlexNet-level accuracy in 1.25M params
-via the fire module: squeeze 1$\times$1 conv followed by parallel
+via the fire module (Iandola et al.\ 2016,
+\href{https://arxiv.org/abs/1602.07360}{arXiv:1602.07360}): squeeze 1$\times$1 conv followed by parallel
 expand 1$\times$1 + 3$\times$3 convs concatenated. The early
 efficiency-CNN family alongside MobileNet and ShuffleNet. Variants:
 SqueezeNet 1.0 (1.25M, paper-exact), 1.1 (1.24M --- earlier downsample),
@@ -2688,8 +2692,9 @@ def squeezeNet1_0 : NetSpec where
 
 \subsubsection*{Inception v1 / v3 / v4 (\texttt{Bestiary/Inception.lean})}
 \emph{One} new primitive (\S~\ref{layer:inceptionModule}). GoogLeNet's parallel multi-scale
-conv-branches concatenated along channels; the 1$\times$1 dimension
-reducer was invented here. Variants: GoogLeNet (7M, paper-exact),
+conv-branches concatenated along channels (Szegedy et al.\ 2014,
+\href{https://arxiv.org/abs/1409.4842}{arXiv:1409.4842}); the
+1$\times$1 dimension reducer was invented here. Variants: GoogLeNet (7M, paper-exact),
 Inception-v3 (23.8M, paper 23M), Inception-v4 (33M, paper 42M ---
 a bit low because our unified module approximates v3/v4's richer
 module catalog). Auxiliary classifiers (v1) and asymmetric
@@ -2728,7 +2733,9 @@ def googLeNet : NetSpec where
 
 \subsubsection*{Xception (\texttt{Bestiary/Xception.lean})}
 \emph{Zero} new primitives --- reuses existing \texttt{.separableConv}.
-``Extreme Inception'': every conv is a depthwise-separable conv. The
+``Extreme Inception'' (Chollet 2017,
+\href{https://arxiv.org/abs/1610.02357}{arXiv:1610.02357}): every conv
+is a depthwise-separable conv. The
 design choice that made MobileNet possible a year later. Variants:
 Xception (21.9M, paper-exact at 22M), tiny fixture. Residual skips
 around each block-of-three-sep-convs are implicit in the linear
@@ -2770,7 +2777,10 @@ def xception : NetSpec where
 \end{verbatim}
 
 \subsubsection*{ShuffleNet (\texttt{Bestiary/ShuffleNet.lean})}
-\emph{One} new primitive (\S~\ref{layer:shuffleBlock}). Variants: ShuffleNet 0.5$\times$ /
+\emph{One} new primitive (\S~\ref{layer:shuffleBlock}). Grouped
+1$\times$1 convs + channel shuffle (Zhang et al.\ 2017,
+\href{https://arxiv.org/abs/1707.01083}{arXiv:1707.01083}).
+Variants: ShuffleNet 0.5$\times$ /
 1.0$\times$ / 2.0$\times$ at $g=3$, plus a tiny fixture.
 
 \begin{verbatim}
@@ -2790,8 +2800,10 @@ def shuffleNet1x : NetSpec where
 \end{verbatim}
 
 \subsubsection*{ShuffleNet v2 (\texttt{Bestiary/ShuffleNetV2.lean})}
-\emph{One} new primitive (\S~\ref{layer:shuffleV2Block}). The efficient-CNN paper that
-called out FLOPs as a bad latency proxy: measured memory-access cost
+\emph{One} new primitive (\S~\ref{layer:shuffleV2Block}). The
+efficient-CNN paper (Ma et al.\ 2018,
+\href{https://arxiv.org/abs/1807.11164}{arXiv:1807.11164}) that called
+out FLOPs as a bad latency proxy: measured memory-access cost
 (MAC) directly and derived four practical guidelines (equal channel
 widths, avoid grouped convs, avoid fragmentation, avoid element-wise
 ops). v2's architecture throws out everything in v1 that violated
@@ -2820,7 +2832,9 @@ def shuffleV2_1_0 : NetSpec where
 
 \subsubsection*{MobileViT (\texttt{Bestiary/MobileViT.lean})}
 \emph{One} new primitive (\S~\ref{layer:mobileVitBlock}); reuses existing
-\texttt{invertedResidual} for the MV2 stages. Hybrid mobile backbone:
+\texttt{invertedResidual} for the MV2 stages. Hybrid mobile backbone
+(Mehta \& Rastegari 2022,
+\href{https://arxiv.org/abs/2110.02178}{arXiv:2110.02178}):
 MobileNet V2 body with MobileViT blocks replacing some of the deeper
 inverted-residual stages. Variants: MobileViT-S (5.6M, paper-exact),
 XS (2.3M), XXS (1.3M), tiny fixture.
@@ -2851,7 +2865,9 @@ def mobileViTS : NetSpec where
 
 \subsubsection*{ConvNeXt (\texttt{Bestiary/ConvNeXt.lean})}
 \emph{Two} new primitives (\S~\ref{layer:convNextStage},
-\S~\ref{layer:convNextDownsample}). ResNet-50 modernized with transformer design choices: 7$\times$7
+\S~\ref{layer:convNextDownsample}). ResNet-50 modernized with
+transformer design choices (Liu et al.\ 2022,
+\href{https://arxiv.org/abs/2201.03545}{arXiv:2201.03545}): 7$\times$7
 depthwise + inverted bottleneck + LN + GELU + separate inter-stage
 downsamples. Proof-by-construction that CNNs didn't need to die in
 2021. Variants: T (28M), S (50M), B (89M), L (198M), tiny fixture ---
@@ -2878,8 +2894,9 @@ def convNextT : NetSpec where
 
 \subsubsection*{Swin Transformer (\texttt{Bestiary/SwinT.lean})}
 \emph{Two} new primitives (\S~\ref{layer:swinStage},
-\S~\ref{layer:patchMerging}). Variants: Swin-T / -S / -B / tiny. Swin-T lands at 28M params matching the paper
-exactly.
+\S~\ref{layer:patchMerging}). Variants: Swin-T / -S / -B / tiny.
+Swin-T lands at 28M params matching the paper (Liu et al.\ 2021,
+\href{https://arxiv.org/abs/2103.14030}{arXiv:2103.14030}) exactly.
 
 \begin{verbatim}
 def swinT : NetSpec where
@@ -2908,7 +2925,9 @@ graph, not a list. The bestiary entries show the single-scale view and
 defer the multi-head refactor to the limitations discussion.
 
 \subsubsection*{YOLO v1/v3/v5/v8/v11 (\texttt{Bestiary/YOLO.lean})}
-v1 uses \emph{zero} new primitives (\texttt{conv2d} + \texttt{maxPool} +
+v1 (Redmon et al.\ 2016,
+\href{https://arxiv.org/abs/1506.02640}{arXiv:1506.02640}) uses
+\emph{zero} new primitives (\texttt{conv2d} + \texttt{maxPool} +
 \texttt{flatten} + \texttt{dense}; the YOLO-ness lives in the loss and
 output reshape, not the architecture). v3 adds \S~\ref{layer:darknetBlock}
 for the Darknet-53 body. v5/v8/v11 use \S~\ref{layer:cspBlock} for
@@ -2993,7 +3012,9 @@ def maskRCNNBackboneR101 : NetSpec where
 
 \subsubsection*{DETR (\texttt{Bestiary/DETR.lean})}
 \emph{Two} new primitives (\S~\ref{layer:transformerDecoder},
-\S~\ref{layer:detrHeads}); reuses existing \texttt{bottleneckBlock} (ResNet backbone),
+\S~\ref{layer:detrHeads}; Carion et al.\ 2020,
+\href{https://arxiv.org/abs/2005.12872}{arXiv:2005.12872}); reuses
+existing \texttt{bottleneckBlock} (ResNet backbone),
 \texttt{patchEmbed} (absorbs the DETR 1$\times$1 channel reduce), and
 \texttt{transformerEncoder}. Variants: DETR-R50 (41M, paper-exact),
 DETR-R101 (60M), tiny.
@@ -3030,7 +3051,8 @@ shape later became the diffusion-model backbone.
 \S~\ref{layer:unetUp}). Skip connections are implicit --- the $i$-th \texttt{unetUp} from the bottom
 pairs with the $i$-th \texttt{unetDown} from the top. Variants:
 original (1-channel, 2-class), RGB, small, tiny. Original lands at 31M
-params matching Ronneberger.
+params matching Ronneberger (Ronneberger et al.\ 2015,
+\href{https://arxiv.org/abs/1505.04597}{arXiv:1505.04597}).
 
 \begin{verbatim}
 def unet : NetSpec where
@@ -3091,8 +3113,9 @@ def deeplabv3plusResnet101 : NetSpec where
 \end{verbatim}
 
 \subsubsection*{SegFormer (\texttt{Bestiary/SegFormer.lean})}
-\emph{Zero} new primitives. Semantic segmentation via a hierarchical
-transformer pyramid (MiT encoder: 4 stages of
+\emph{Zero} new primitives. Semantic segmentation (Xie et al.\ 2021,
+\href{https://arxiv.org/abs/2105.15203}{arXiv:2105.15203}) via a
+hierarchical transformer pyramid (MiT encoder: 4 stages of
 \texttt{.transformerEncoder} glued by \texttt{.patchMerging}) and a
 lightweight MLP decoder (a handful of \texttt{.dense} calls). The
 decoder stays trivially small across all B0--B5 encoder sizes --- the
@@ -3290,9 +3313,10 @@ def cycleganGenerator : NetSpec where
 \end{verbatim}
 
 \subsubsection*{DDPM (\texttt{Bestiary/Diffusion.lean})}
-\emph{Zero} new primitives. The denoiser is a UNet --- literally the
-same \S~\ref{layer:unetDown} and \S~\ref{layer:unetUp} Ronneberger
-shipped in 2015. Everything ``diffusion'' lives in the training loop:
+\emph{Zero} new primitives. The denoiser in Ho et al.'s DDPM (2020,
+\href{https://arxiv.org/abs/2006.11239}{arXiv:2006.11239}) is a UNet
+--- literally the same \S~\ref{layer:unetDown} and
+\S~\ref{layer:unetUp} Ronneberger shipped in 2015. Everything ``diffusion'' lives in the training loop:
 a forward noise schedule adds Gaussian noise over $T$ steps, a reverse
 process learns to predict the added noise, sampling iterates the
 reverse from pure noise back to a clean image. None of that is a
@@ -3377,7 +3401,9 @@ outer loop. The architectural side is a stack of residual CNN blocks;
 the complexity lives in the outer loop, not the network.
 
 \subsubsection*{AlphaGo (\texttt{Bestiary/AlphaGo.lean})}
-\emph{Zero} new primitives. The original 2016 Lee Sedol system.
+\emph{Zero} new primitives. The original 2016 Lee Sedol system
+(Silver et al.\ 2016,
+\href{https://www.nature.com/articles/nature16961}{Nature}).
 Three separate networks: a 13-layer conv \emph{policy} network
 ($\sim$3.9M) trained first on 30M human games then fine-tuned via
 self-play, a 13-layer conv + FC-head \emph{value} network
@@ -3410,7 +3436,9 @@ def alphaGoPolicyNet : NetSpec where
 
 \subsubsection*{AlphaZero (\texttt{Bestiary/AlphaZero.lean})}
 \emph{Zero} new primitives --- \texttt{convBn} + \texttt{residualBlock}
-+ \texttt{conv2d} + \texttt{dense}. Two-headed (policy + value),
++ \texttt{conv2d} + \texttt{dense}. Two-headed (policy + value) network
+(Silver et al.\ 2018,
+\href{https://arxiv.org/abs/1712.01815}{arXiv:1712.01815}),
 expressed as two separate \texttt{NetSpec} values sharing the body in
 prose. Variants: AlphaGo Zero (Go), AlphaZero chess, tiny fixture.
 
@@ -3432,7 +3460,8 @@ def alphaGoZeroPolicy : NetSpec where
 \emph{Zero} new primitives --- three ResNet-style networks (representation,
 dynamics, prediction) reusing \texttt{convBn} + \texttt{residualBlock}
 + \texttt{dense}. The architectural novelty is the three-network
-factoring, not any single layer type. Five \texttt{NetSpec} values per
+factoring, not any single layer type (Schrittwieser et al.\ 2020,
+\href{https://arxiv.org/abs/1911.08265}{arXiv:1911.08265}). Five \texttt{NetSpec} values per
 variant (rep, dyn body, dyn reward head, pred policy, pred value).
 Variants: Go, Atari (representation only), tiny.
 
@@ -3457,7 +3486,9 @@ procedure, and the bestiary entry exists to make that point.
 
 \subsubsection*{Mamba (\texttt{Bestiary/Mamba.lean})}
 \emph{One} new primitive (\S~\ref{layer:mambaBlock}). Variants: Mamba-130M / 370M / 790M /
-tiny, matching Gu \& Dao's param counts within $\sim$5\%.
+tiny, matching Gu \& Dao's (2023,
+\href{https://arxiv.org/abs/2312.00752}{arXiv:2312.00752}) param counts
+within $\sim$5\%.
 
 \begin{verbatim}
 def mamba130M : NetSpec where
@@ -3479,7 +3510,11 @@ since a linear \texttt{NetSpec} can't express the $L \to L \times D$
 lookup). Variants: BERT-base (109M, paper 110M), BERT-large (335M,
 paper 340M), RoBERTa-base (124M, paper 125M), RoBERTa-large (355M,
 paper-exact), tinyBERT fixture. The architectural lesson is that
-RoBERTa = BERT; all RoBERTa gains came from training procedure
+RoBERTa (Liu et al.\ 2019,
+\href{https://arxiv.org/abs/1907.11692}{arXiv:1907.11692}) = BERT
+(Devlin et al.\ 2018,
+\href{https://arxiv.org/abs/1810.04805}{arXiv:1810.04805}); all
+RoBERTa gains came from training procedure
 (dynamic masking, more data, bigger batches, dropped NSP) --- none
 of which lives in the NetSpec.
 
@@ -3499,7 +3534,11 @@ def bertBase : NetSpec where
 \end{verbatim}
 
 \subsubsection*{GPT-1 / GPT-2 (\texttt{Bestiary/GPT.lean})}
-\emph{Zero} new primitives --- the decoder-only counterpart of BERT. Same
+\emph{Zero} new primitives. GPT-1 (Radford et al.\ 2018,
+\href{https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf}{OpenAI TR})
+and GPT-2 (Radford et al.\ 2019,
+\href{https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf}{OpenAI TR})
+are decoder-only counterparts of BERT. Same
 \texttt{.transformerEncoder}, now read as a stack of decoder blocks
 with a causal attention mask (a training-time detail, not a
 parameter). No pooler; GPT-2 uses pre-norm instead of BERT's
@@ -3599,8 +3638,9 @@ def nystromformerBase : NetSpec where
 \end{verbatim}
 
 \subsubsection*{WaveNet (\texttt{Bestiary/WaveNet.lean})}
-\emph{One} new primitive (\S~\ref{layer:waveNetBlock}). Dilated causal convolutions for raw
-audio sample prediction: exponential receptive field, linear parameter
+\emph{One} new primitive (\S~\ref{layer:waveNetBlock}). Dilated causal
+convolutions for raw audio sample prediction (van den Oord et al.\
+2016, \href{https://arxiv.org/abs/1609.03499}{arXiv:1609.03499}): exponential receptive field, linear parameter
 growth. The foundation of neural TTS and PixelCNN. Variants: single
 stack (0.4M), 3-stack (paper setup, with a NetSpec-linearity
 approximation), music (single stack, 4.1M), tiny. One honest
@@ -3656,7 +3696,9 @@ def whisperSmall : NetSpec where
 
 \subsubsection*{NeRF (\texttt{Bestiary/NeRF.lean})}
 \emph{Two} new primitives (\S~\ref{layer:positionalEncoding},
-\S~\ref{layer:nerfMLP}). The "it's literally just an MLP" paper. Under 600K params at canonical
+\S~\ref{layer:nerfMLP}). The "it's literally just an MLP" paper
+(Mildenhall et al.\ 2020,
+\href{https://arxiv.org/abs/2003.08934}{arXiv:2003.08934}). Under 600K params at canonical
 config; the architectural novelty is nonexistent. What makes NeRF work
 is the positional encoding + the volumetric-rendering loss ---
 both \emph{outside} the network, not layers in it. Variants:
@@ -3678,7 +3720,8 @@ def nerf : NetSpec where
 
 \subsubsection*{CLIP (\texttt{Bestiary/CLIP.lean})}
 \emph{Zero} new primitives. Two textbook encoders glued together by a
-contrastive loss: a ResNet-50 or ViT-B for images, a 12-layer causal
+contrastive loss (Radford et al.\ 2021,
+\href{https://arxiv.org/abs/2103.00020}{arXiv:2103.00020}): a ResNet-50 or ViT-B for images, a 12-layer causal
 transformer for text, each with a final linear projection to a shared
 embedding space. Variants: CLIP-RN50, CLIP-ViT-B/32 (151M, paper-exact),
 CLIP-ViT-L/14 (427M, paper-exact), tiny fixture. The architectural
@@ -3701,7 +3744,9 @@ def clipViTB32ImageEncoder : NetSpec where
 
 \subsubsection*{LLaVA / LLaVA-1.5 (\texttt{Bestiary/LLaVA.lean})}
 \emph{Zero} new primitives. The cleanest exhibit of the modern
-vision-language pattern: frozen CLIP ViT encoder + small MLP
+vision-language pattern (Liu et al.\ 2023,
+\href{https://arxiv.org/abs/2304.08485}{arXiv:2304.08485}; LLaVA-1.5:
+\href{https://arxiv.org/abs/2310.03744}{arXiv:2310.03744}): frozen CLIP ViT encoder + small MLP
 projector + (mostly) frozen LLaMA/Vicuna language model. Trained in
 two stages --- projector-only pretrain, then joint instruction fine-
 tune. Shown as separate NetSpecs per component: vision encoder
@@ -3733,9 +3778,10 @@ def llava15Projector : NetSpec where
 
 \subsubsection*{AlphaFold 2 Evoformer (\texttt{Bestiary/Evoformer.lean})}
 \emph{Two} new primitives (\S~\ref{layer:evoformerBlock},
-\S~\ref{layer:structureModule}). Dual-representation (MSA + pair) doesn't fit a linear \texttt{NetSpec}
-cleanly; the bestiary shows the two bundled primitives and notes the
-limitation. Variants: full (76M), mini, tiny.
+\S~\ref{layer:structureModule}). Dual-representation (MSA + pair)
+doesn't fit a linear \texttt{NetSpec} cleanly; the bestiary shows the
+two bundled primitives and notes the limitation (Jumper et al.\ 2021,
+\href{https://www.nature.com/articles/s41586-021-03819-2}{Nature}). Variants: full (76M), mini, tiny.
 
 \appendix
 
