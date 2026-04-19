@@ -57,8 +57,12 @@ jobs:
         with:
           path: .lake
           # Invalidate cache when Mathlib rev changes or lean-toolchain bumps.
-          key: lake-${{ runner.os }}-${{ hashFiles('lake-manifest.json', 'lean-toolchain') }}
+          # The -v2 suffix forces a fresh cache slot after re-enabling doc-gen4
+          # in b31eccc — the pre-existing cache has the same hashFiles key but
+          # is missing .lake/build/doc/, so actions/cache no-ops the save.
+          key: lake-v2-${{ runner.os }}-${{ hashFiles('lake-manifest.json', 'lean-toolchain') }}
           restore-keys: |
+            lake-v2-${{ runner.os }}-
             lake-${{ runner.os }}-
 
       # NOTE: we don't run `lake update` on every CI build — that would
