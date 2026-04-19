@@ -2850,6 +2850,45 @@ tiny, YOLOv3 (40M backbone), YOLOv5s/m (3M/8M single-scale), YOLOv8n/s
 detection heads don't linearize --- same skip-connection problem as
 UNet; all entries show a single-scale view.
 
+\begin{verbatim}
+def yolo : NetSpec where
+  name   := "YOLOv1 (Redmon 2016)"
+  imageH := 448
+  imageW := 448
+  layers := [
+    .conv2d 3 64 7 .same .relu,
+    .maxPool 2 2,
+    .conv2d 64 192 3 .same .relu,
+    .maxPool 2 2,
+    -- Block 3: 1×1 reduce + 3×3 expand
+    .conv2d 192 128 1 .same .relu,
+    .conv2d 128 256 3 .same .relu,
+    .conv2d 256 256 1 .same .relu,
+    .conv2d 256 512 3 .same .relu,
+    .maxPool 2 2,
+    -- Block 4: four 1×1+3×3 pairs, then 1×1 + 3×3
+    .conv2d 512 256 1 .same .relu, .conv2d 256 512 3 .same .relu,
+    .conv2d 512 256 1 .same .relu, .conv2d 256 512 3 .same .relu,
+    .conv2d 512 256 1 .same .relu, .conv2d 256 512 3 .same .relu,
+    .conv2d 512 256 1 .same .relu, .conv2d 256 512 3 .same .relu,
+    .conv2d 512 512 1 .same .relu,
+    .conv2d 512 1024 3 .same .relu,
+    .maxPool 2 2,
+    -- Block 5: two 1×1+3×3 pairs + two more 3×3 convs
+    .conv2d 1024 512 1 .same .relu, .conv2d 512 1024 3 .same .relu,
+    .conv2d 1024 512 1 .same .relu, .conv2d 512 1024 3 .same .relu,
+    .conv2d 1024 1024 3 .same .relu,
+    .conv2d 1024 1024 3 .same .relu,
+    -- Block 6: two 3×3 at 7×7
+    .conv2d 1024 1024 3 .same .relu,
+    .conv2d 1024 1024 3 .same .relu,
+    -- Head: flatten + 2 FC → reshape to (7, 7, 2·5 + 20) = 1470
+    .flatten,
+    .dense (7 * 7 * 1024) 4096 .relu,
+    .dense 4096 (7 * 7 * (2 * 5 + 20)) .identity
+  ]
+\end{verbatim}
+
 \subsubsection*{Mask R-CNN (\texttt{Bestiary/MaskRCNN.lean})}
 Uses \S~\ref{layer:fpnModule}. The canonical two-stage detector +
 instance segmentation reference (He et al.\ 2017). Five architectural
@@ -2865,12 +2904,51 @@ primitive; everything else reuses existing ResNet / conv / dense
 primitives. DETR is its end-to-end transformer-era cousin; Mask2Former
 is the DETR-style instance-segmentation successor.
 
+\begin{verbatim}
+def maskRCNNBackboneR101 : NetSpec where
+  name   := "Mask R-CNN backbone (ResNet-101-FPN)"
+  imageH := 800
+  imageW := 800
+  layers := [
+    -- ResNet-101 stem + body (C2..C5)
+    .convBn 3 64 7 2 .same,
+    .maxPool 3 2,
+    .bottleneckBlock 64   256  3  1,            -- C2
+    .bottleneckBlock 256  512  4  2,            -- C3
+    .bottleneckBlock 512  1024 23 2,            -- C4
+    .bottleneckBlock 1024 2048 3  2,            -- C5
+    -- FPN: combines C2–C5 into a 4-level feature pyramid at 256 channels
+    .fpnModule 256 512 1024 2048 256
+  ]
+\end{verbatim}
+
 \subsubsection*{DETR (\texttt{Bestiary/DETR.lean})}
 Uses \S~\ref{layer:transformerDecoder} and \S~\ref{layer:detrHeads},
 plus existing \texttt{bottleneckBlock} (ResNet backbone),
 \texttt{patchEmbed} (absorbs the DETR 1$\times$1 channel reduce), and
 \texttt{transformerEncoder}. Variants: DETR-R50 (41M, paper-exact),
 DETR-R101 (60M), tiny.
+
+\begin{verbatim}
+def detrR50 : NetSpec where
+  name   := "DETR-R50"
+  imageH := 800
+  imageW := 800
+  layers := [
+    -- ResNet-50 backbone (stem + 4 stages)
+    .convBn 3 64 7 2 .same,
+    .maxPool 2 2,
+    .bottleneckBlock 64 256 3 1,                -- C2
+    .bottleneckBlock 256 512 4 2,               -- C3
+    .bottleneckBlock 512 1024 6 2,              -- C4
+    .bottleneckBlock 1024 2048 3 2,             -- C5
+    -- Channel projection (2048→256) + flatten spatial + pos embed
+    .patchEmbed 2048 256 1 625,                 -- 25×25 = 625 tokens
+    .transformerEncoder 256 8 2048 6,           -- 6 encoder blocks, 8 heads
+    .transformerDecoder 256 8 2048 6 100,       -- 6 decoder blocks, 100 queries
+    .detrHeads 256 91                           -- class (→92) + box (→4)
+  ]
+\end{verbatim}
 
 \subsection{Semantic segmentation}
 
@@ -2884,6 +2962,26 @@ connections are implicit --- the $i$-th \texttt{unetUp} from the bottom
 pairs with the $i$-th \texttt{unetDown} from the top. Variants:
 original (1-channel, 2-class), RGB, small, tiny. Original lands at 31M
 params matching Ronneberger.
+
+\begin{verbatim}
+def unet : NetSpec where
+  name   := "UNet (original, grayscale → 2-class)"
+  imageH := 512
+  imageW := 512
+  layers := [
+    .unetDown 1   64,                           -- encoder stage 1
+    .unetDown 64  128,                          -- encoder stage 2
+    .unetDown 128 256,                          -- encoder stage 3
+    .unetDown 256 512,                          -- encoder stage 4
+    .convBn 512 1024 3 1 .same,                 -- bottleneck part 1
+    .convBn 1024 1024 3 1 .same,                -- bottleneck part 2
+    .unetUp 1024 512,                           -- decoder (skip: encoder 4)
+    .unetUp 512 256,                            --         (skip: encoder 3)
+    .unetUp 256 128,                            --         (skip: encoder 2)
+    .unetUp 128 64,                             --         (skip: encoder 1)
+    .conv2d 64 2 1 .same .identity              -- 1×1 conv to 2 classes
+  ]
+\end{verbatim}
 
 \subsubsection*{DeepLab v3+ (\texttt{Bestiary/DeepLabV3Plus.lean})}
 Uses \S~\ref{layer:asppModule}. The pre-transformer segmentation
@@ -2900,6 +2998,27 @@ variant), tinyDeepLab fixture. The ASPP skip-to-stage-2 in the
 decoder doesn't linearize cleanly; same hack as UNet / WaveNet use.
 SegFormer (next entry) argues ``do ASPP's multi-scale context via a
 transformer pyramid''; different mechanism, same goal.
+
+\begin{verbatim}
+def deeplabv3plusResnet101 : NetSpec where
+  name   := "DeepLab v3+ (ResNet-101 backbone)"
+  imageH := 513
+  imageW := 513
+  layers := [
+    .convBn 3 64 7 2 .same,                     -- stem
+    .maxPool 3 2,
+    -- ResNet-101 body; stage 4 uses stride 1 (atrous in real impl)
+    .bottleneckBlock 64   256  3  1,
+    .bottleneckBlock 256  512  4  2,
+    .bottleneckBlock 512  1024 23 2,
+    .bottleneckBlock 1024 2048 3  1,
+    .asppModule 2048 256,                       -- ASPP: 5 branches + fusion
+    -- Decoder (skip from stage 2 doesn't linearize; prose notes it)
+    .conv2d 256 256 3 .same .relu,
+    .conv2d 256 256 3 .same .relu,
+    .conv2d 256 21 1 .same .identity            -- Pascal VOC: 21 classes
+  ]
+\end{verbatim}
 
 \subsubsection*{SegFormer (\texttt{Bestiary/SegFormer.lean})}
 \emph{Zero} new primitives. Semantic segmentation via a hierarchical
@@ -2919,6 +3038,27 @@ the shape without those details. Comparison to DeepLab v3+: SegFormer's
 decoder is $\sim$3M params across all sizes, DeepLab's ASPP module
 is $\sim$15M and needs per-receptive-field tuning.
 
+\begin{verbatim}
+def segformerB2 : NetSpec where
+  name   := "SegFormer MiT-B2 encoder"
+  imageH := 224
+  imageW := 224
+  layers := [
+    -- Stage 1: 224 → 56, 64 channels, 3 blocks
+    .patchEmbed 3 64 4 (56 * 56),
+    .transformerEncoder 64 1 256 3,
+    -- Stage 2: 56 → 28, 128 channels, 4 blocks
+    .patchMerging 64 128,
+    .transformerEncoder 128 2 512 4,
+    -- Stage 3: 28 → 14, 320 channels, 6 blocks
+    .patchMerging 128 320,
+    .transformerEncoder 320 5 1280 6,
+    -- Stage 4: 14 → 7, 512 channels, 3 blocks
+    .patchMerging 320 512,
+    .transformerEncoder 512 8 2048 3
+  ]
+\end{verbatim}
+
 \subsubsection*{SAM (\texttt{Bestiary/SAM.lean})}
 \emph{Zero} new primitives. Promptable segmentation (Kirillov et
 al.\ 2023): a ViT image encoder runs once per image, a tiny prompt
@@ -2932,6 +3072,18 @@ mask decoder is a small \texttt{.transformerDecoder} (from DETR,
 3.3M mask decoder, tinySAM fixture. The image encoder accounts for
 $\sim$99\% of each variant's parameter budget, which is why
 EfficientSAM (Xiong et al.\ 2023) focused its distillation there.
+
+\begin{verbatim}
+def samEncoderH : NetSpec where
+  name   := "SAM ViT-H image encoder"
+  imageH := 1024
+  imageW := 1024
+  layers := [
+    -- 16×16 patches on 1024×1024 → 64×64 = 4096 tokens
+    .patchEmbed 3 1280 16 4096,
+    .transformerEncoder 1280 16 5120 32          -- 32 blocks, dim 1280
+  ]
+\end{verbatim}
 
 \subsection{Image generation}
 
@@ -2957,6 +3109,19 @@ architectural template scales up to Stable Diffusion's VAE (see
 different scales. VQ-VAE (discrete-codebook variant) and $\beta$-VAE
 (scaled KL) are mentioned in the prose notes.
 
+\begin{verbatim}
+def mnistVAEEncoder : NetSpec where
+  name   := "MNIST VAE encoder (MLP, 20-dim latent)"
+  imageH := 28
+  imageW := 28
+  layers := [
+    .flatten,
+    .dense 784 400 .relu,
+    -- Output is 2×20 = 40: first 20 are μ, last 20 are log σ².
+    .dense 400 40 .identity
+  ]
+\end{verbatim}
+
 \subsubsection*{DCGAN (\texttt{Bestiary/DCGAN.lean})}
 \emph{Zero} new primitives. Deep Convolutional GAN (Radford et
 al.\ 2015) --- the paper that made GAN training reliably work. Eight
@@ -2972,6 +3137,22 @@ same hack appears in VAE and Stable Diffusion entries. GAN training
 dynamics (mode collapse, equilibrium stability) are all
 training-procedure concerns living outside the NetSpec.
 
+\begin{verbatim}
+def dcganGenerator : NetSpec where
+  name   := "DCGAN generator (64×64 RGB)"
+  imageH := 4                                     -- starting spatial (post-projection)
+  imageW := 4
+  layers := [
+    -- Each .convBn stands in for a 4×4 transposed conv doubling spatial;
+    -- same params (ic × oc × k²), upsampling is a forward-pass detail.
+    .convBn 1024 512 4 1 .same,                  --  4×4 →  8×8
+    .convBn 512  256 4 1 .same,                  --  8×8 → 16×16
+    .convBn 256  128 4 1 .same,                  -- 16×16 → 32×32
+    .convBn 128   64 4 1 .same,                  -- 32×32 → 64×64
+    .conv2d   64   3 4 .same .identity           -- RGB output (tanh in real)
+  ]
+\end{verbatim}
+
 \subsubsection*{Pix2Pix (\texttt{Bestiary/Pix2Pix.lean})}
 \emph{Zero} new primitives. The paired-data ancestor of CycleGAN,
 from the same lab 9 months earlier (Isola et al.\ 2017). UNet
@@ -2985,6 +3166,26 @@ pairs you fall back to CycleGAN's cycle-consistency trick. Hardware
 context: 2016--2017, 54M UNet on $256 \times 256$ images meant
 batch size 1 on a GTX 1080 Ti, which is how InstanceNorm became the
 default normalizer in this lineage --- it was what fit.
+
+\begin{verbatim}
+def pix2pixGenerator : NetSpec where
+  name   := "Pix2Pix generator (8-level UNet, 256×256 RGB)"
+  imageH := 256
+  imageW := 256
+  layers := [
+    -- Encoder: 8 × unetDown, channels 64 → 128 → 256 → 512 → 512 ×4
+    .unetDown 3    64, .unetDown 64  128,
+    .unetDown 128 256, .unetDown 256 512,
+    .unetDown 512 512, .unetDown 512 512,
+    .unetDown 512 512, .unetDown 512 512,         -- bottleneck at 1×1×512
+    -- Decoder: 8 × unetUp mirroring the encoder
+    .unetUp 512 512, .unetUp 512 512,
+    .unetUp 512 512, .unetUp 512 512,
+    .unetUp 512 512, .unetUp 512 256,
+    .unetUp 256 128, .unetUp 128  64,
+    .conv2d 64 3 1 .same .identity                -- 1×1 to RGB (tanh in real)
+  ]
+\end{verbatim}
 
 \subsubsection*{CycleGAN (\texttt{Bestiary/CycleGAN.lean})}
 \emph{Zero} new primitives. Unpaired image translation (Zhu et
@@ -3000,6 +3201,22 @@ grid of patch real/fake logits (2.8M, paper $\sim$2.8M). Four-network
 pattern shown as two specs ($G$ and $D$); the other $F$ and
 $D_X$ are architecturally identical copies. The ``one clever loss''
 does the work --- the architecture is quite ordinary.
+
+\begin{verbatim}
+def cycleganGenerator : NetSpec where
+  name   := "CycleGAN generator (9-block ResNet, 256×256 RGB)"
+  imageH := 256
+  imageW := 256
+  layers := [
+    .convBn 3 64 7 1 .same,                       -- 7×7 stem
+    .convBn 64  128 3 2 .same,                    -- 256 → 128
+    .convBn 128 256 3 2 .same,                    -- 128 →  64
+    .residualBlock 256 256 9 1,                   -- 9 res blocks (bottleneck)
+    .convBn 256 128 3 1 .same,                    -- upsample stand-in
+    .convBn 128  64 3 1 .same,
+    .conv2d 64 3 7 .same .identity                -- 7×7 to RGB
+  ]
+\end{verbatim}
 
 \subsubsection*{DDPM (\texttt{Bestiary/Diffusion.lean})}
 \emph{Zero} new primitives. The denoiser is a UNet --- literally the
@@ -3018,6 +3235,24 @@ time-embedding projection on top of the UNet); the spec's value is
 showing the architectural shape, not an exact param match. The
 lesson is the same one CLIP and NeRF taught: the novelty lives in
 the training procedure, not in layer design.
+
+\begin{verbatim}
+def ddpmCifar : NetSpec where
+  name   := "DDPM (CIFAR-10, backbone approx)"
+  imageH := 32
+  imageW := 32
+  layers := [
+    -- Encoder: 32 → 16 → 8 → 4
+    .unetDown 3   128,                            -- 32 → 16
+    .unetDown 128 256,                            -- 16 →  8
+    .unetDown 256 256,                            --  8 →  4
+    .convBn 256 256 3 1 .same,                    -- bottleneck
+    .convBn 256 256 3 1 .same,
+    -- Decoder: 4 → 8 → 16 → 32
+    .unetUp 256 256, .unetUp 256 256, .unetUp 256 128,
+    .conv2d 128 3 1 .same .identity               -- predict added noise (3-ch)
+  ]
+\end{verbatim}
 
 \subsubsection*{Stable Diffusion (\texttt{Bestiary/StableDiffusion.lean})}
 \emph{Zero} new primitives. The paper that made generative image
@@ -3041,6 +3276,28 @@ Three components are pretrained and frozen during SD's main training
 switches the UNet for a DiT transformer. The latent-diffusion plus
 text-conditioning template is the same.
 
+\begin{verbatim}
+def sdUNet15 : NetSpec where
+  name   := "SD 1.5 UNet denoiser (backbone approx)"
+  imageH := 64                                    -- latent resolution, not pixel
+  imageW := 64
+  layers := [
+    .conv2d 4 320 3 .same .identity,              -- stem (latent → channels)
+    -- Encoder: 64 → 32 → 16 → 8
+    .unetDown 320  640,
+    .unetDown 640  1280,
+    .unetDown 1280 1280,
+    -- Bottleneck at 8×8 (real SD inserts a spatial transformer here)
+    .convBn 1280 1280 3 1 .same,
+    .convBn 1280 1280 3 1 .same,
+    -- Decoder: 8 → 16 → 32 → 64
+    .unetUp 1280 1280,
+    .unetUp 1280 1280,
+    .unetUp 1280 640,
+    .conv2d 640 4 3 .same .identity               -- predict noise (4-ch latent)
+  ]
+\end{verbatim}
+
 \subsection{Reinforcement learning}
 
 Two-headed (policy + value) networks wrapped in a self-play + MCTS
@@ -3060,11 +3317,44 @@ board only, one two-headed net, self-play only --- and plays better
 (5185 Elo vs 3140). The one-sentence lesson is written into every
 follow-up paper: features the network can learn on its own, it will.
 
+\begin{verbatim}
+def alphaGoPolicyNet : NetSpec where
+  name   := "AlphaGo policy network"
+  imageH := 19
+  imageW := 19
+  layers := [
+    -- 13 conv layers: one 5×5 stem + twelve 3×3 at 192 channels
+    .convBn 48 192 5 1 .same,                     -- 48 hand-crafted planes in
+    .convBn 192 192 3 1 .same, .convBn 192 192 3 1 .same,
+    .convBn 192 192 3 1 .same, .convBn 192 192 3 1 .same,
+    .convBn 192 192 3 1 .same, .convBn 192 192 3 1 .same,
+    .convBn 192 192 3 1 .same, .convBn 192 192 3 1 .same,
+    .convBn 192 192 3 1 .same, .convBn 192 192 3 1 .same,
+    .convBn 192 192 3 1 .same,
+    -- 1×1 conv to per-position move logit (reshape + pass scalar downstream)
+    .conv2d 192 1 1 .same .identity
+  ]
+\end{verbatim}
+
 \subsubsection*{AlphaZero (\texttt{Bestiary/AlphaZero.lean})}
 Uses existing primitives only (\texttt{convBn} + \texttt{residualBlock}
 + \texttt{conv2d} + \texttt{dense}). Two-headed (policy + value),
 expressed as two separate \texttt{NetSpec} values sharing the body in
 prose. Variants: AlphaGo Zero (Go), AlphaZero chess, tiny fixture.
+
+\begin{verbatim}
+def alphaGoZeroPolicy : NetSpec where
+  name   := "AlphaGo Zero (policy head)"
+  imageH := 19
+  imageW := 19
+  layers := [
+    .convBn 17 256 3 1 .same,                     -- 17 raw-history planes → 256
+    .residualBlock 256 256 19 1,                  -- 19 residual blocks (shared body)
+    .conv2d 256 2 1 .same .identity,              -- policy head: 2 filters
+    .flatten,
+    .dense (2 * 19 * 19) 362 .identity            -- 361 board moves + pass
+  ]
+\end{verbatim}
 
 \subsubsection*{MuZero (\texttt{Bestiary/MuZero.lean})}
 Zero new primitives --- three ResNet-style networks (representation,
@@ -3073,6 +3363,17 @@ dynamics, prediction) reusing \texttt{convBn} + \texttt{residualBlock}
 factoring, not any single layer type. Five \texttt{NetSpec} values per
 variant (rep, dyn body, dyn reward head, pred policy, pred value).
 Variants: Go, Atari (representation only), tiny.
+
+\begin{verbatim}
+def muZeroGoRepresentation : NetSpec where
+  name   := "MuZero Go — representation h"
+  imageH := 19
+  imageW := 19
+  layers := [
+    .convBn 17 256 3 1 .same,                     -- observation → hidden
+    .residualBlock 256 256 16 1                   -- 16 ResBlocks (AlphaZero-shaped body)
+  ]
+\end{verbatim}
 
 \subsection{Beyond vision}
 
@@ -3086,6 +3387,18 @@ procedure, and the bestiary entry exists to make that point.
 Uses \S~\ref{layer:mambaBlock}. Variants: Mamba-130M / 370M / 790M /
 tiny, matching Gu \& Dao's param counts within $\sim$5\%.
 
+\begin{verbatim}
+def mamba130M : NetSpec where
+  name   := "Mamba-130M"
+  imageH := 2048                                  -- context length (L tokens)
+  imageW := 1
+  layers := [
+    -- dim=768, state=16, expand=2, 24 blocks
+    .mambaBlock 768 16 2 24,
+    .dense 768 50280 .identity                    -- LM head (GPT-NeoX vocab)
+  ]
+\end{verbatim}
+
 \subsubsection*{BERT / RoBERTa (\texttt{Bestiary/BERT.lean})}
 Zero new primitives --- uses \texttt{.transformerEncoder}, same kit as
 ViT / DETR, plus \texttt{.dense vocab$\to$dim} standing in for the
@@ -3097,6 +3410,21 @@ paper-exact), tinyBERT fixture. The architectural lesson is that
 RoBERTa = BERT; all RoBERTa gains came from training procedure
 (dynamic masking, more data, bigger batches, dropped NSP) --- none
 of which lives in the NetSpec.
+
+\begin{verbatim}
+def bertBase : NetSpec where
+  name   := "BERT-base"
+  imageH := 512                                   -- max context length
+  imageW := 1
+  layers := [
+    -- Token-embedding lookup approximated as dense (vocab → D)
+    .dense 30522 768 .identity,
+    -- 12 encoder blocks, post-norm, GELU, mlpDim = 4·D
+    .transformerEncoder 768 12 3072 12,
+    -- [CLS] pooler (tanh applied downstream)
+    .dense 768 768 .identity
+  ]
+\end{verbatim}
 
 \subsubsection*{GPT-1 / GPT-2 (\texttt{Bestiary/GPT.lean})}
 Zero new primitives --- the decoder-only counterpart of BERT. Same
@@ -3111,6 +3439,19 @@ GPT-1 (116M, paper 117M), GPT-2 small (123M, paper 124M), medium
 fixture. Reference implementation: Karpathy's \texttt{nanoGPT}
 ($\sim$300 lines of PyTorch) targets GPT-2 small and is the
 canonical mental model.
+
+\begin{verbatim}
+def gpt2Small : NetSpec where
+  name   := "GPT-2 small"                         -- the nanoGPT target
+  imageH := 1024                                  -- context length
+  imageW := 1
+  layers := [
+    -- Tied token embedding (also serves as LM head projection)
+    .dense 50257 768 .identity,
+    -- 12 decoder blocks, pre-norm (mask is attention-time, not a param)
+    .transformerEncoder 768 12 3072 12
+  ]
+\end{verbatim}
 
 \subsubsection*{QANet (\texttt{Bestiary/QANet.lean})}
 \emph{Zero} new primitives. The 2018 reading-comprehension
@@ -3133,6 +3474,22 @@ BERT landing 7 months later ended the SQuAD-as-benchmark era, but
 QANet's hybrid shape lived on --- showed up repeatedly in vision
 4 years later.
 
+\begin{verbatim}
+def qanetEncoderBlock : NetSpec where
+  name   := "QANet encoder block (4× sep-conv + self-attn + FFN)"
+  imageH := 400                                   -- representative context length
+  imageW := 1
+  layers := [
+    -- 4 depthwise-separable convs (local context, kernel 7 in paper)
+    .separableConv 128 128 1,
+    .separableConv 128 128 1,
+    .separableConv 128 128 1,
+    .separableConv 128 128 1,
+    -- Self-attention + FFN + 2 LayerNorms (global context)
+    .transformerEncoder 128 8 512 1
+  ]
+\end{verbatim}
+
 \subsubsection*{Nyströmformer (\texttt{Bestiary/Nystromformer.lean})}
 \emph{Zero} new primitives. An efficient-attention transformer
 (Xiong et al.\ 2021) that replaces the $O(n^2)$ softmax attention
@@ -3152,6 +3509,19 @@ from numerical linear algebra, routed through kernel-method
 literature in the early 2000s, finally surfacing in transformers ---
 is a genuinely long arc for one math idea.
 
+\begin{verbatim}
+def nystromformerBase : NetSpec where
+  name   := "Nyströmformer base (BERT-base-shaped, O(n) attention)"
+  imageH := 4096                                  -- long context
+  imageW := 1
+  layers := [
+    -- Architecturally identical to BERT-base; Nyström approximation
+    -- lives inside the attention kernel, not the NetSpec.
+    .dense 30522 768 .identity,
+    .transformerEncoder 768 12 3072 12
+  ]
+\end{verbatim}
+
 \subsubsection*{WaveNet (\texttt{Bestiary/WaveNet.lean})}
 Uses \S~\ref{layer:waveNetBlock}. Dilated causal convolutions for raw
 audio sample prediction: exponential receptive field, linear parameter
@@ -3161,6 +3531,22 @@ approximation), music (single stack, 4.1M), tiny. One honest
 limitation: the residual-vs-skip dual-output pattern doesn't
 linearize cleanly, so the 3-stack variant uses a simplified
 channel-flow approximation.
+
+\begin{verbatim}
+def waveNet : NetSpec where
+  name   := "WaveNet (single stack, speech)"
+  imageH := 16000                                 -- 1 second @ 16 kHz
+  imageW := 1
+  layers := [
+    -- Input embedding: 256 mu-law bins → 32 residual channels
+    .conv2d 256 32 1 .same .identity,
+    -- One stack of 10 dilated residual blocks (dilations 2⁰..2⁹)
+    .waveNetBlock 32 512 10,
+    -- Output head: skip-sum → 1×1 → 1×1, 256-way categorical
+    .conv2d 512 256 1 .same .relu,
+    .conv2d 256 256 1 .same .identity
+  ]
+\end{verbatim}
 
 \subsubsection*{Whisper (\texttt{Bestiary/Whisper.lean})}
 \emph{Zero} new primitives. Encoder-decoder transformer over log-mel
@@ -3180,6 +3566,17 @@ language or switch between transcribe / translate) is
 prompt-engineering, not architecture --- Whisper's architectural
 novelty is essentially zero.
 
+\begin{verbatim}
+def whisperSmall : NetSpec where
+  name   := "Whisper small encoder"
+  imageH := 1500                                  -- post-stem audio tokens (3000 / 2)
+  imageW := 1
+  layers := [
+    -- 12 encoder blocks, dim 768, 12 heads, mlp 3072
+    .transformerEncoder 768 12 3072 12
+  ]
+\end{verbatim}
+
 \subsubsection*{NeRF (\texttt{Bestiary/NeRF.lean})}
 Uses \S~\ref{layer:positionalEncoding} and \S~\ref{layer:nerfMLP}. The
 "it's literally just an MLP" paper. Under 600K params at canonical
@@ -3187,6 +3584,20 @@ config; the architectural novelty is nonexistent. What makes NeRF work
 is the positional encoding + the volumetric-rendering loss ---
 both \emph{outside} the network, not layers in it. Variants:
 canonical (593K), fast (167K hidden=128), tiny fixture.
+
+\begin{verbatim}
+def nerf : NetSpec where
+  name   := "NeRF (canonical)"
+  imageH := 1
+  imageW := 1
+  layers := [
+    -- Positional encoding of (x,y,z): 3 coords × 2 × 10 freqs = 60-dim
+    .positionalEncoding 3 10,
+    -- 8-layer MLP with mid-skip + dual density/RGB heads.
+    -- encodedDirDim = 2·2·4 = 16 (2D direction, 4 frequencies)
+    .nerfMLP 60 16 256
+  ]
+\end{verbatim}
 
 \subsubsection*{CLIP (\texttt{Bestiary/CLIP.lean})}
 \emph{Zero} new primitives. Two textbook encoders glued together by a
@@ -3196,6 +3607,20 @@ embedding space. Variants: CLIP-RN50, CLIP-ViT-B/32 (151M, paper-exact),
 CLIP-ViT-L/14 (427M, paper-exact), tiny fixture. The architectural
 lesson from CLIP is identical to NeRF's: the novelty lives in data and
 objective, not in layer design.
+
+\begin{verbatim}
+def clipViTB32ImageEncoder : NetSpec where
+  name   := "CLIP-ViT-B/32 (image encoder)"
+  imageH := 224
+  imageW := 224
+  layers := [
+    -- ViT-B/32: patch size 32 → 49 patches, dim 768, 12 blocks, 12 heads
+    .patchEmbed 3 768 32 49,
+    .transformerEncoder 768 12 3072 12,
+    -- [CLS] token → shared 512-dim embedding space
+    .dense 768 512 .identity
+  ]
+\end{verbatim}
 
 \subsubsection*{LLaVA / LLaVA-1.5 (\texttt{Bestiary/LLaVA.lean})}
 \emph{Zero} new primitives. The cleanest exhibit of the modern
@@ -3215,6 +3640,20 @@ Flamingo, and every modern VLM demo generalize this template with
 fancier adapters (Q-Former, Perceiver resampler, gated xattn-dense),
 but the frozen-backbone-plus-adapter shape is the same.
 
+\begin{verbatim}
+def llava15Projector : NetSpec where
+  name   := "LLaVA-1.5 projector (2-layer MLP)"
+  imageH := 576                                   -- visual token count (24×24)
+  imageW := 1
+  layers := [
+    -- The entire LLaVA architectural contribution: map CLIP's 1024-dim
+    -- image tokens into the LLM's 4096-dim embedding space. ~21M params
+    -- — roughly 0.3% of total LLaVA-1.5 7B. GELU between is zero-param.
+    .dense 1024 4096 .identity,
+    .dense 4096 4096 .identity
+  ]
+\end{verbatim}
+
 \subsubsection*{AlphaFold 2 Evoformer (\texttt{Bestiary/Evoformer.lean})}
 Uses \S~\ref{layer:evoformerBlock} and \S~\ref{layer:structureModule}.
 Dual-representation (MSA + pair) doesn't fit a linear \texttt{NetSpec}
@@ -3222,6 +3661,22 @@ cleanly; the bestiary shows the two bundled primitives and notes the
 limitation. Variants: full (76M), mini, tiny.
 
 \appendix
+
+\begin{verbatim}
+def alphaFold2 : NetSpec where
+  name   := "AlphaFold 2 (Evoformer + StructureModule)"
+  imageH := 384                                   -- max residues (N_res)
+  imageW := 1
+  layers := [
+    -- 48 blocks of dual-representation processing (MSA + pair).
+    -- Each block bundles: MSA row-attn (w/ pair bias), MSA col-attn,
+    -- MSA transition, outer-product mean → pair, triangle-mul updates
+    -- (out + in), triangle self-attention (start + end), pair transition.
+    .evoformerBlock 256 128 48,
+    -- Structure Module: 8 recurrent IPA rounds (weights shared).
+    .structureModule 384 128 8
+  ]
+\end{verbatim}
 
 \chapter{Getting started}
 \label{app:getting_started}
