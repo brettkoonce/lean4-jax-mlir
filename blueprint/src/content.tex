@@ -532,6 +532,108 @@ backward function with its correctness claim.
   \uses{ax:pdiv_add}
 \end{theorem}
 
+\subsection*{Why axioms, not Mathlib?}
+
+You could build this whole chapter from Mathlib's \texttt{HasFDerivAt}
+and its composition lemmas. Every axiom above --- chain rule,
+linearity, product rule, identity, reindex --- has a near-direct
+Mathlib counterpart. The book axiomatizes instead for pragmatic
+reasons: it keeps the proof tree small and self-contained, it makes
+the axiom surface visible at a glance (count them in
+Appendix~\ref{app:axioms}), and it lets the formal content build on a
+fixed foundation without Mathlib version churn.
+
+The tradeoff: you're trusting these eight calculus facts on the face
+of them. Bridging to Mathlib (replacing each axiom with the
+corresponding proved lemma) is open work; if you cared, it's an
+afternoon's effort. The output --- every VJP theorem downstream ---
+doesn't change.
+
+\subsection*{Worked example: the dense layer}
+
+The axioms above look abstract on their own. Here's how they compose
+into a concrete VJP, using just the tools of this chapter.
+
+The dense layer forward is $f(x) = W \cdot x + b$, mapping $\Vect{n}$
+to $\Vect{m}$. Its Jacobian at any $x$ is precisely $W$ --- axiom
+\ref{ax:pdiv_dense} states this directly:
+\[
+  \pdiv\, f\, x\, i\, j = W_{i,j}.
+\]
+
+\textbf{Step 1: package $f$ as a $\HasVJP$.} A $\HasVJP$ record
+bundles a backward function with a correctness claim. For dense, the
+backward function is
+$\mathrm{backward}(dy) = W^T \cdot dy$: multiply the upstream
+gradient by the transposed weights. The correctness claim
+$\mathrm{backward}(dy)_j = \sum_i dy_i \cdot \pdiv\, f\, x\, i\, j$
+follows from $\pdiv\_dense$ in two lines. Call the resulting record
+$\texttt{dense\_has\_vjp}$ (proved as
+\S~\ref{thm:dense_has_vjp} in the next chapter).
+
+\textbf{Step 2: compose two dense layers.} Let
+$g(y) = W_2 \cdot y + b_2$ be a second dense layer, mapping
+$\Vect{m}$ to $\Vect{p}$. The composition $g \circ f$ maps
+$\Vect{n}$ all the way to $\Vect{p}$.
+
+By Theorem~\ref{thm:vjp_comp} --- the \emph{VJP chain rule}, proved
+above from $\pdiv\_comp$ --- if $f$ and $g$ each have a $\HasVJP$, so
+does $g \circ f$, with backward function
+$dz \mapsto \mathrm{backward}_f(\mathrm{backward}_g(dz))$.
+
+That's it. Two applications of $\texttt{dense\_has\_vjp}$ plus one
+application of $\texttt{vjp\_comp}$, and a two-layer dense stack has
+a machine-checked backward pass.
+
+\textbf{Every later chapter follows this pattern.}
+Chapter~\ref{chap:mlp}'s MLP is three dense layers plus activations
+--- the above, with $\texttt{relu\_has\_vjp}$ inserted between each
+pair. Chapter~\ref{chap:cnn}'s CNN replaces dense with
+$\texttt{conv2d\_has\_vjp3}$ but the composition story is unchanged.
+By Chapter~\ref{chap:attention} the pattern is identical:
+$\HasVJP$s for bundled primitives (conv, BN, attention) composed
+with the chain, fan-in, and product rules from this chapter.
+
+One pattern, scaled up.
+
+\subsection*{Axiom budget per chapter}
+
+If you're planning how much of the book to read, here's the axiom
+cost per architecture. Every later chapter adds zero or a few bundled
+primitives; the 8 structural axioms from this chapter get reused
+forever.
+
+\begin{center}
+\begin{tabular}{l r r l}
+\hline
+Chapter & New axioms & Cumulative & Architectures unlocked \\
+\hline
+2 (this chapter)       &   8  &  8 / 30 & foundation \\
+3 (MLP)                &   4  & 12 / 30 & MLP \\
+4 (CNN)                &   6  & 18 / 30 & $+$ CNN \\
+5 (BN)                 &   3  & 21 / 30 & $+$ BN-nets \\
+6 (Residual)           &   0  & 21 / 30 & $+$ ResNet-34 \\
+7 (Depthwise)          &   4  & 25 / 30 & $+$ MobileNet V2 \\
+8 (SE)                 &   0  & 25 / 30 & $+$ EfficientNet \\
+9 (LN + GELU)          &   3  & 28 / 30 & $+$ transformer infra \\
+10 (Attention)         &   2  & 30 / 30 & $+$ ViT \\
+\hline
+\end{tabular}
+\end{center}
+
+Two things worth noticing.
+
+\textbf{Chapters 6 and 8 add zero axioms.} Residual connections and
+squeeze-and-excitation are \emph{pure composition theorems} --- every
+proof there is built from axioms that already exist. That's exactly
+the scaling claim the book is making: new architectures, no new
+calculus.
+
+\textbf{This chapter's 8 axioms get reused forever.} $\pdiv\_comp$,
+$\pdiv\_add$, $\pdiv\_mul$, and the five structural supports show up
+in every later chapter's proofs. Learn them once, done with them;
+everything after piles layer-specific primitives on top.
+
 \chapter{MLP: Dense Layer}
 \label{chap:mlp}
 
