@@ -710,6 +710,77 @@ def test_gelu():
     return check("pdiv_gelu", gelu, jac, (n,))
 
 # ════════════════════════════════════════════════════════════════
+# PatchEmbed (ViT): conv2d (stride=patchSize) + reshape to (N, D) +
+# CLS prepend + add pos_embed → flatten. Bundled VJP for the whole
+# composition (Attention.lean: patchEmbed_flat_has_vjp).
+#
+# Strategy: verify the input-image gradient. The conv-on-tiles is
+# stride=patchSize with no overlap, so the input grad has a clean
+# closed form (each output position lands on exactly one input patch).
+# CLS / pos_embed grads are trivial (identity-like) and not retested
+# here — the conv path is the substantive part of the backward.
+# ════════════════════════════════════════════════════════════════
+def test_patch_embed_flat():
+    ic, H, W, patchSize, D = 2, 4, 4, 2, 3
+    nH, nW = H // patchSize, W // patchSize
+    N = nH * nW                                              # 4 patches
+
+    W_conv = np.random.randn(D, ic, patchSize, patchSize)
+    b_conv = np.random.randn(D)
+    cls    = np.random.randn(D)
+    pos    = np.random.randn(N + 1, D)
+
+    def fwd(x_flat):
+        x = x_flat.reshape(ic, H, W)
+        out = np.zeros((D, nH, nW))
+        for o in range(D):
+            for c in range(ic):
+                for ph in range(nH):
+                    for pw in range(nW):
+                        for kh in range(patchSize):
+                            for kw in range(patchSize):
+                                out[o, ph, pw] += (
+                                    x[c, ph * patchSize + kh, pw * patchSize + kw]
+                                    * W_conv[o, c, kh, kw]
+                                )
+            out[o] += b_conv[o]
+        patches = out.transpose(1, 2, 0).reshape(N, D)        # row-major
+        full    = np.vstack([cls.reshape(1, D), patches]) + pos
+        return full.ravel()
+
+    x  = np.random.randn(ic, H, W)
+    dy = np.random.randn((N + 1) * D)
+
+    # Finite-diff input gradient
+    xf    = x.ravel()
+    dx_fd = np.zeros_like(xf)
+    for i in range(len(xf)):
+        xp = xf.copy(); xp[i] += EPS
+        xm = xf.copy(); xm[i] -= EPS
+        dx_fd[i] = np.sum(((fwd(xp) - fwd(xm)) / (2 * EPS)) * dy)
+
+    # Claimed: drop dy's CLS row (no x-dep), reshape rest to (D, nH, nW),
+    # apply the stride=patchSize conv input-grad.
+    dy_full    = dy.reshape(N + 1, D)
+    dy_patches = dy_full[1:]                                  # (N, D)
+    dy_grid    = dy_patches.reshape(nH, nW, D).transpose(2, 0, 1)  # (D, nH, nW)
+    dx_claimed = np.zeros((ic, H, W))
+    for o in range(D):
+        for c in range(ic):
+            for ph in range(nH):
+                for pw in range(nW):
+                    for kh in range(patchSize):
+                        for kw in range(patchSize):
+                            dx_claimed[c, ph * patchSize + kh, pw * patchSize + kw] += (
+                                dy_grid[o, ph, pw] * W_conv[o, c, kh, kw]
+                            )
+
+    err    = np.max(np.abs(dx_fd - dx_claimed.ravel()))
+    status = "PASS" if err < TOL else "FAIL"
+    print(f"  {status}: {'patchEmbed_flat (input grad)':30s} max_err={err:.2e}")
+    return err < TOL
+
+# ════════════════════════════════════════════════════════════════
 # Run all
 # ════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
@@ -734,6 +805,7 @@ if __name__ == "__main__":
     results.append(("Attention",    "sdpa_back_Q",          test_sdpa_back_Q()))
     results.append(("Attention",    "sdpa_back_K",          test_sdpa_back_K()))
     results.append(("Attention",    "sdpa_back_V",          test_sdpa_back_V()))
+    results.append(("Attention",    "patchEmbed_flat",      test_patch_embed_flat()))
     results.append(("Depthwise",    "depthwise_input_grad", test_depthwise_input_grad()))
     results.append(("Depthwise",    "depthwise_weight_grad", test_depthwise_weight_grad()))
     results.append(("Depthwise",    "depthwise_bias_grad",   test_depthwise_bias_grad()))
