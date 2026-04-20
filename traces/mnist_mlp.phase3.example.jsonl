@@ -1,0 +1,7 @@
+{"kind":"header","phase":"phase3","netspec_name":"mnist-mlp","netspec_hash":"d41d8cd98f00b204e9800998ecf8427e","config":{"lr":0.1,"batch_size":128,"epochs":12,"use_adam":false,"weight_decay":0.0,"cosine":false,"warmup_epochs":0,"augment":false,"label_smoothing":0.0,"seed":314159},"total_params":669706,"dataset":"mnist","emitted_at":"2026-04-20T18:00:00Z","emitter_version":"1"}
+{"kind":"step","step":1,"epoch":0,"loss":2.302585,"lr":0.1}
+{"kind":"step","step":2,"epoch":0,"loss":2.289473,"lr":0.1}
+{"kind":"step","step":3,"epoch":0,"loss":2.254102,"lr":0.1}
+{"kind":"step","step":4,"epoch":0,"loss":2.198874,"lr":0.1}
+{"kind":"step","step":5,"epoch":0,"loss":2.124308,"lr":0.1}
+{"kind":"step","step":6,"epoch":0,"loss":2.031944,"lr":0.1}

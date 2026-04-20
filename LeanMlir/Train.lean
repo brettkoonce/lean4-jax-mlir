@@ -240,6 +240,40 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
   IO.eprintln s!"training: {bpE} batches/epoch, batch={batchN}, {optName}, lr={baseLR}, cosine warmup={warmup}, label_smooth={cfg.labelSmoothing}, wd={cfg.weightDecay}"
   IO.eprintln s!"  BN layers: {spec.bnLayers.size}, BN stat floats: {nBnStats}"
 
+  -- Trace emission (opt-in via LEAN_MLIR_TRACE_OUT env var).
+  -- Writes a JSON Lines file with a header + one record per training
+  -- step. See traces/TRACE_FORMAT.md for the contract.
+  let traceHandle : Option IO.FS.Handle ←
+    match (← IO.getEnv "LEAN_MLIR_TRACE_OUT") with
+    | some path => do
+        let h ← IO.FS.Handle.mk path .write
+        let jsBool := fun (b : Bool) => if b then "true" else "false"
+        let dsName : String := match ds with
+          | .mnist      => "mnist"
+          | .cifar10    => "cifar10"
+          | .imagenette => "imagenette"
+        let hdr :=
+          "{\"kind\":\"header\",\"phase\":\"phase3\"" ++
+          s!",\"netspec_name\":\"{spec.name}\"" ++
+          ",\"config\":{" ++
+            s!"\"lr\":{baseLR}" ++
+            s!",\"batch_size\":{batchN}" ++
+            s!",\"epochs\":{epochs}" ++
+            s!",\"use_adam\":{jsBool cfg.useAdam}" ++
+            s!",\"weight_decay\":{cfg.weightDecay}" ++
+            s!",\"cosine\":{jsBool cfg.cosineDecay}" ++
+            s!",\"warmup_epochs\":{warmup}" ++
+            s!",\"augment\":{jsBool cfg.augment}" ++
+            s!",\"label_smoothing\":{cfg.labelSmoothing}" ++
+            s!",\"seed\":{cfg.seed}" ++
+          "}" ++
+          s!",\"total_params\":{nP}" ++
+          s!",\"dataset\":\"{dsName}\"" ++
+          ",\"emitter_version\":\"1\"}\n"
+        h.putStr hdr
+        pure (some h)
+    | none => pure none
+
   let mut p := params
   let mut m := adamM
   let mut v := adamV
@@ -277,6 +311,15 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
       p := F32.slice out 0 nP
       m := F32.slice out nP nP
       v := F32.slice out (2 * nP) nP
+      if let some h := traceHandle then
+        let line :=
+          "{\"kind\":\"step\"" ++
+          s!",\"step\":{globalStep}" ++
+          s!",\"epoch\":{epoch}" ++
+          s!",\"loss\":{loss}" ++
+          s!",\"lr\":{lr}" ++
+          "}\n"
+        h.putStr line
       let batchBnStats := out.extract ((nT + 1) * 4) ((nT + 1 + nBnStats) * 4)
       let bnMom : Float := if globalStep == 1 then 1.0 else 0.1
       runningBnStats ← F32.ema runningBnStats batchBnStats bnMom
