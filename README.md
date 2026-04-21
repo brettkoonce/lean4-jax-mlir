@@ -306,7 +306,7 @@ ROCm 7.2.0 / gfx1100.
   author  = {Brett Koonce and Claude Code},
   title   = {Verified Deep Learning with Lean4: Formal Backpropagation from MLP to Attention, via MLIR},
   url     = {https://github.com/brettkoonce/lean4-mlir},
-  version = {0.1},
+  version = {0.5},
   year    = {2026},
 }
 ```
