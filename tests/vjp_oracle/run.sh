@@ -21,7 +21,11 @@ if [ -z "${IREE_BACKEND:-}" ] && { [ -e /dev/kfd ] || [ -d /opt/rocm ]; }; then
   export JAX_PLATFORMS="${JAX_PLATFORMS:-cpu}"
 fi
 
-CASES=("${@:-dense}")
+if [ "$#" -gt 0 ]; then
+  CASES=("$@")
+else
+  CASES=(dense dense-relu conv convbn conv-pool)
+fi
 FAIL=0
 
 for name in "${CASES[@]}"; do
@@ -45,7 +49,8 @@ for name in "${CASES[@]}"; do
   # Pass an absolute path so the generated Python still finds data
   # when invoked from repo root.
   ( cd jax && ./.lake/build/bin/vjp-oracle-${name} "$(cd .. && pwd)/data" > /dev/null 2>&1 ) || true
-  script=jax/.lake/build/generated_vjp_oracle_${name}.py
+  # Generated Python filename uses underscores; case names use hyphens.
+  script=jax/.lake/build/generated_vjp_oracle_${name//-/_}.py
   [ -f "$script" ] || { echo "FAIL  ${name}  phase-2 did not emit $script"; FAIL=1; continue; }
   LEAN_MLIR_INIT_LOAD="$(realpath "$init_bin")" \
   LEAN_MLIR_NO_SHUFFLE=1 \
@@ -53,8 +58,16 @@ for name in "${CASES[@]}"; do
     .venv/bin/python3 "$script" > "$p2_log" 2>&1 \
     || { echo "FAIL  ${name}  phase-2 python crashed (see $p2_log)"; FAIL=1; continue; }
 
-  # Diff
-  .venv/bin/python3 tests/vjp_oracle/diff_step.py "$p3_trace" "$p2_trace" "$name" || FAIL=1
+  # Diff. Per-case tolerance: maxPool's argmax tiebreaks disagree
+  # between XLA and IREE for tied input elements (MNIST has many
+  # zero pixels → many ties), pushing the step-2 Δ above the 1e-4
+  # default by ~5×. Not a correctness bug; just a looser noise floor.
+  case "$name" in
+    conv-pool) tol=1e-3 ;;
+    convbn)    tol=1e-4 ;;  # BN variance reductions ≲ 1e-4
+    *)         tol=1e-5 ;;  # dense / conv / relu — ULP-tight
+  esac
+  .venv/bin/python3 tests/vjp_oracle/diff_step.py "$p3_trace" "$p2_trace" "$name" "$tol" || FAIL=1
 done
 
 exit $FAIL

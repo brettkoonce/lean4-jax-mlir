@@ -118,6 +118,22 @@ lean_exe «vjp-oracle-dense» where
   root := `MainVjpOracleDense
   moreLinkArgs := ireeLink
 
+lean_exe «vjp-oracle-dense-relu» where
+  root := `MainVjpOracleDenseRelu
+  moreLinkArgs := ireeLink
+
+lean_exe «vjp-oracle-conv» where
+  root := `MainVjpOracleConv
+  moreLinkArgs := ireeLink
+
+lean_exe «vjp-oracle-convbn» where
+  root := `MainVjpOracleConvBn
+  moreLinkArgs := ireeLink
+
+lean_exe «vjp-oracle-conv-pool» where
+  root := `MainVjpOracleConvPool
+  moreLinkArgs := ireeLink
+
 -- ═══════════════════════════════════════════════════════════════════
 -- Tests + benchmarks
 -- ═══════════════════════════════════════════════════════════════════

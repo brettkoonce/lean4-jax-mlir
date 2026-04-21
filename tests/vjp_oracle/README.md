@@ -38,12 +38,27 @@ it up from the environment.
 
 ## Test cases
 
-| case | axiom probed | expected step-2 Δ |
-|---|---|---|
-| `dense` | `dense_has_vjp` + `softmaxCE_grad` | ~1e-5 (f32 dense floor) |
+| case | axiom probed | tolerance | observed step-2 Δ |
+|---|---|---|---|
+| `dense` | `dense_has_vjp` + `softmaxCE_grad` | 1e-5 | 2.73e-07 |
+| `dense-relu` | `relu_has_vjp` + `vjp_comp` | 1e-5 | 4.77e-07 |
+| `conv` | `conv2d_has_vjp` + `flatten_has_vjp` | 1e-5 | 2.24e-07 |
+| `convbn` | `convBn_has_vjp` (conv + BN + ReLU) | 1e-4 | 2.18e-06 |
+| `conv-pool` | `maxPool_has_vjp` | 1e-3 | 1.18e-04 |
 
-More to add: `dense_relu`, `conv_only`, `convbn_only`, `residual`, ...
-one per axiom in `LeanMlir/Proofs/`.
+Why tolerances differ:
+- Dense / relu / conv: step-2 Δ sits at or below 1 ULP. 1e-5 is comfortable headroom.
+- BN: variance reductions over ~100k-element tensors between XLA and
+  IREE diverge at the f32-reduction-tree level, pushing step-2 Δ to
+  ~1e-6. 1e-4 keeps headroom.
+- MaxPool: argmax tiebreaks disagree between XLA and IREE when two
+  input elements are equal (common on MNIST's sparse zero pixels),
+  routing gradient mass to different input positions. Mathematically
+  valid either way but produces ~1e-4 step-2 Δ. 1e-3 keeps headroom.
+
+More to add: `residual`, `se_block`, `layernorm`, `attention` — each
+requires a matching `init_params_from_file` extension in
+`jax/Jax/Codegen.lean` for its param layout.
 
 ## Adding a case
 
