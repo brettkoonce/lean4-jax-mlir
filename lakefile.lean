@@ -142,6 +142,10 @@ lean_exe «vjp-oracle-depthwise» where
   root := `MainVjpOracleDepthwise
   moreLinkArgs := ireeLink
 
+lean_exe «vjp-oracle-attention» where
+  root := `MainVjpOracleAttention
+  moreLinkArgs := ireeLink
+
 -- ═══════════════════════════════════════════════════════════════════
 -- Tests + benchmarks
 -- ═══════════════════════════════════════════════════════════════════

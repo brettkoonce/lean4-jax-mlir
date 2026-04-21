@@ -47,6 +47,7 @@ it up from the environment.
 | `conv-pool` | `maxPool_has_vjp` | 1e-3 | 1.18e-04 |
 | `residual` | `biPath_has_vjp` (additive fan-in VJP) | 1e-5 | 3.06e-07 |
 | `depthwise` | depthwise-conv VJP via `.invertedResidual` | 1e-4 | 1.11e-05 |
+| `attention` | ViT block: `patchEmbed` + `transformerBlock_has_vjp_mat` + classifier | 1e-5 | 6.85e-07 |
 
 Why tolerances differ:
 - Dense / relu / conv: step-2 Δ sits at or below 1 ULP. 1e-5 is comfortable headroom.
@@ -58,11 +59,32 @@ Why tolerances differ:
   routing gradient mass to different input positions. Mathematically
   valid either way but produces ~1e-4 step-2 Δ. 1e-3 keeps headroom.
 
-More to add: `se_block`, `layernorm`, `attention`/ViT — each requires a
-matching `init_params_from_file` extension in `jax/Jax/Codegen.lean`
-for its param layout. Attention in particular needs `patchEmbed` (conv
-+ CLS token + positional embedding) plus `transformerEncoder`
-(LN×2 + Q/K/V + output + MLP×2 per block).
+More to add: `se_block` (mbConv with SE on), `layernorm` in isolation,
+other transformer variants — each requires a matching
+`init_params_from_file` extension in `jax/Jax/Codegen.lean` for its
+param layout.
+
+## Known init-heuristic wart (surfaced by `attention`)
+
+`LeanMlir.SpecHelpers.heInitParams` uses a peek-ahead heuristic to
+decide whether a rank-1 tensor after a rank-≥2 tensor is a bias (set
+to 0.0) or a γ/β pair with the following rank-1 tensor (set to 1.0 /
+0.0). For `.patchEmbed` and at transformer-block boundaries this
+misfires:
+
+- `.patchEmbed` emits `(W, bias, cls_token, pos_embed)`. The bias and
+  cls_token are both `[dim]`, so they get treated as a γ/β pair —
+  bias is initialized to 1.0 (should be 0.0) and cls_token to 0.0
+  (arbitrary, but at least 0.0 is benign).
+- Between transformer sublayers, `(Output_b, LN2_γ)` and
+  `(fc2_b, FinalLN_γ)` look like γ/β pairs — so biases land at 1.0
+  and LN γ's land at 0.0, which makes LN2 and Final LN collapse their
+  outputs to 0 until γ learns away from zero during training.
+
+This is a training-init quirk, not a VJP bug. Both phases see the same
+degenerate init so the oracle passes with step-2 Δ at the f32 floor.
+The correct fix is probably to extend heInitParams' heuristic (or mark
+cls_token / pos_embed / LN boundaries in the ADT) — separate change.
 
 ## Adding a case
 

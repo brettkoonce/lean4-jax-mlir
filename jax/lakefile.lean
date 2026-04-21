@@ -75,3 +75,6 @@ lean_exe «vjp-oracle-residual» where
 
 lean_exe «vjp-oracle-depthwise» where
   root := `MainVjpOracleDepthwise
+
+lean_exe «vjp-oracle-attention» where
+  root := `MainVjpOracleAttention

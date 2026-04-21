@@ -451,6 +451,23 @@ private def emitConvBnFromBuf (comment : String) (ic oc k : Nat) : String :=
   s!"    beta = jnp.array(buf[idx:idx+{oc}]); idx += {oc}\n" ++
   "    params.append((W, gamma, beta))\n"
 
+-- Helper: emit init_params_from_file code for a transformer dense layer.
+-- Phase 3 stores W flat in (fi, fo) row-major; phase 2's forward does
+-- `x @ W.T + b`, so stored orientation is (fo, fi) — hence the .T.
+private def emitTransDenseFromBuf (comment : String) (fi fo : Nat) : String :=
+  let nW := fi * fo
+  s!"    # {comment} (W, b)\n" ++
+  s!"    W = jnp.array(buf[idx:idx+{nW}].reshape({fi}, {fo}).T); idx += {nW}\n" ++
+  s!"    b = jnp.array(buf[idx:idx+{fo}]); idx += {fo}\n" ++
+  "    params.append((W, b))\n"
+
+-- Helper: emit init_params_from_file code for a LayerNorm (γ, β) pair.
+private def emitLNFromBuf (comment : String) (dim : Nat) : String :=
+  s!"    # {comment} (γ, β)\n" ++
+  s!"    gamma = jnp.array(buf[idx:idx+{dim}]); idx += {dim}\n" ++
+  s!"    beta = jnp.array(buf[idx:idx+{dim}]); idx += {dim}\n" ++
+  "    params.append((gamma, beta))\n"
+
 -- Helper: emit init code for dense layer (weight, bias) with Xavier uniform
 private def emitDenseInit (comment : String) (fanIn fanOut : Nat) : String :=
   "    # " ++ comment ++ "\n" ++
@@ -760,6 +777,37 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
         -- it by setting ic=1 and oc=mid so the reshape comes out right.
         code := code ++ emitConvBnFromBuf s!"invRes[{bi}] depthwise {mid}" 1 mid 3
         code := code ++ emitConvBnFromBuf s!"invRes[{bi}] project {mid}→{oc}" mid oc 1
+    | .patchEmbed ic dim p nP =>
+      -- Conv W[dim, ic, p, p] + b[dim], then CLS token [dim], then
+      -- positional embedding [nP+1, dim] — three tuples total.
+      let nW := dim * ic * p * p
+      code := code ++
+        s!"    # patchEmbed conv W, b ({ic}→{dim}, {p}×{p})\n" ++
+        s!"    W = jnp.array(buf[idx:idx+{nW}].reshape({dim}, {ic}, {p}, {p})); idx += {nW}\n" ++
+        s!"    b = jnp.array(buf[idx:idx+{dim}]); idx += {dim}\n" ++
+        "    params.append((W, b))\n"
+      code := code ++
+        s!"    # patchEmbed cls token [{dim}]\n" ++
+        s!"    cls = jnp.array(buf[idx:idx+{dim}]); idx += {dim}\n" ++
+        "    params.append((cls,))\n"
+      let nPos := (nP + 1) * dim
+      code := code ++
+        s!"    # patchEmbed positional embedding [{nP + 1}, {dim}]\n" ++
+        s!"    pos = jnp.array(buf[idx:idx+{nPos}].reshape({nP + 1}, {dim})); idx += {nPos}\n" ++
+        "    params.append((pos,))\n"
+    | .transformerEncoder dim _heads mlpDim nBlocks =>
+      -- Per block: LN1 + (Q, K, V, Output) + LN2 + (fc1, fc2) = 8 tuples.
+      for bi in [:nBlocks] do
+        code := code ++ emitLNFromBuf s!"trans[{bi}] LN1" dim
+        code := code ++ emitTransDenseFromBuf s!"trans[{bi}] Q {dim}→{dim}" dim dim
+        code := code ++ emitTransDenseFromBuf s!"trans[{bi}] K {dim}→{dim}" dim dim
+        code := code ++ emitTransDenseFromBuf s!"trans[{bi}] V {dim}→{dim}" dim dim
+        code := code ++ emitTransDenseFromBuf s!"trans[{bi}] Output {dim}→{dim}" dim dim
+        code := code ++ emitLNFromBuf s!"trans[{bi}] LN2" dim
+        code := code ++ emitTransDenseFromBuf s!"trans[{bi}] fc1 {dim}→{mlpDim}" dim mlpDim
+        code := code ++ emitTransDenseFromBuf s!"trans[{bi}] fc2 {mlpDim}→{dim}" mlpDim dim
+      -- Final LayerNorm after all blocks.
+      code := code ++ emitLNFromBuf "trans final LN" dim
     | .maxPool _ _ | .globalAvgPool | .flatten =>
       pure ()  -- no params
     | _ =>
