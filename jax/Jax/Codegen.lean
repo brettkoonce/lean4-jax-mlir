@@ -95,9 +95,11 @@ private def emitHelpers (spec : NetSpec) : String := Id.run do
       "def conv_bn(x, w, gamma, beta, stride=(1,1), padding='SAME'):\n" ++
       "    x = jax.lax.conv_general_dilated(x, w, stride, padding,\n" ++
       "          dimension_numbers=('NCHW', 'OIHW', 'NCHW'))\n" ++
-      "    # Instance normalization (per-sample, spatial stats)\n" ++
-      "    mean = jnp.mean(x, axis=(2, 3), keepdims=True)\n" ++
-      "    var = jnp.var(x, axis=(2, 3), keepdims=True)\n" ++
+      "    # Batch normalization: mean/var over (N, H, W) per channel,\n" ++
+      "    # matching LeanMlir.MlirCodegen.emitConvBn's 2-step reduction\n" ++
+      "    # across dims [2,3] then [0] (divisor b*oH*oW).\n" ++
+      "    mean = jnp.mean(x, axis=(0, 2, 3), keepdims=True)\n" ++
+      "    var = jnp.var(x, axis=(0, 2, 3), keepdims=True)\n" ++
       "    x = (x - mean) / jnp.sqrt(var + 1e-5)\n" ++
       "    return x * gamma.reshape(1, -1, 1, 1) + beta.reshape(1, -1, 1, 1)\n\n"
   if spec.hasResidual then
@@ -698,8 +700,8 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
   code := code ++ "    return params\n\n"
   -- Init-from-file path: load a flat float32 buffer produced by phase 3
   -- (LEAN_MLIR_INIT_DUMP=...). Used for step-level cross-compiler diff.
-  -- Currently only supports dense layers (MNIST MLP). Falls back to JAX
-  -- random init for any other layer type.
+  -- Supports dense, conv2d, convBn (MNIST MLP + MNIST CNN). Params are
+  -- walked in the same order `LeanMlir.SpecHelpers.paramShapes` emits.
   code := code ++
     "def init_params_from_file(path):\n" ++
     "    buf = np.frombuffer(open(path, 'rb').read(), dtype=np.float32)\n" ++
@@ -714,8 +716,25 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
         s!"    W = jnp.array(buf[idx:idx+{nW}].reshape({fi}, {fo}).T); idx += {nW}\n" ++
         s!"    b = jnp.array(buf[idx:idx+{fo}]); idx += {fo}\n" ++
         "    params.append((W, b))\n"
+    | .conv2d ic oc k _ _ =>
+      let nW := oc * ic * k * k
+      code := code ++
+        s!"    # conv2d {ic}→{oc}, {k}×{k}\n" ++
+        s!"    W = jnp.array(buf[idx:idx+{nW}].reshape({oc}, {ic}, {k}, {k})); idx += {nW}\n" ++
+        s!"    b = jnp.array(buf[idx:idx+{oc}]); idx += {oc}\n" ++
+        "    params.append((W, b))\n"
+    | .convBn ic oc k _ _ =>
+      let nW := oc * ic * k * k
+      code := code ++
+        s!"    # convBn {ic}→{oc}, {k}×{k} (W, γ, β)\n" ++
+        s!"    W = jnp.array(buf[idx:idx+{nW}].reshape({oc}, {ic}, {k}, {k})); idx += {nW}\n" ++
+        s!"    gamma = jnp.array(buf[idx:idx+{oc}]); idx += {oc}\n" ++
+        s!"    beta = jnp.array(buf[idx:idx+{oc}]); idx += {oc}\n" ++
+        "    params.append((W, gamma, beta))\n"
+    | .maxPool _ _ | .globalAvgPool | .flatten =>
+      pure ()  -- no params
     | _ =>
-      code := code ++ "    raise NotImplementedError('init_params_from_file: non-dense layer')\n"
+      code := code ++ "    raise NotImplementedError('init_params_from_file: unsupported layer')\n"
   code := code ++ "    return params\n\n"
   code
 
