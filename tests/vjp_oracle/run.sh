@@ -82,11 +82,24 @@ for name in "${CASES[@]}"; do
     conv-pool) tol=1e-3 ;;
     convbn)    tol=1e-4 ;;  # BN variance reductions ≲ 1e-4
     # Stacked-BN blocks: each convBn pass contributes ≲ 1e-6 of rounding
-    # noise; a 3-5 convBn composition lands at 1e-5 to 1e-4 step-2 Δ.
+    # noise on ROCm; a 3-5 convBn composition lands at 1e-5 to 1e-4 step-2 Δ.
+    # CUDA cuDNN kernels push some of these ~2-5× higher — same pattern
+    # as dense/conv/depthwise. Loosen per case on NVIDIA.
     bottleneck)   tol=1e-4 ;;  # 3 convBn per block (reduce/3x3/expand)
-    mbconv-v3)    tol=1e-4 ;;  # 4 convBn (expand/dw/project) + SE + h-swish
-    fused-mbconv) tol=1e-4 ;;  # stem + fused k×k convBn + project
     uib)          tol=1e-4 ;;  # preDW + expand + postDW + project (4 convBn)
+    mbconv)
+      # Expand + depthwise + project + SE. CUDA lands step-2 Δ ~2.2e-4.
+      if [ "$CUDA_HOST" = "1" ]; then tol=3e-4; else tol=1e-4; fi
+      ;;
+    mbconv-v3)
+      # 4 convBn + SE + h-swish/h-sigmoid. Piecewise-linear activations on
+      # top of 4 convBn push CUDA step-2 Δ to ~5e-4 (mars: ~6e-6).
+      if [ "$CUDA_HOST" = "1" ]; then tol=7e-4; else tol=1e-4; fi
+      ;;
+    fused-mbconv)
+      # Stem + fused k×k convBn + project. CUDA step-2 Δ ~1.9e-4.
+      if [ "$CUDA_HOST" = "1" ]; then tol=3e-4; else tol=1e-4; fi
+      ;;
     depthwise)
       # 4 stacked BN passes (stem+expand+dw+proj). On CUDA, cuDNN's
       # depthwise conv kernel lands step-2 Δ around 5e-4 — same 5×
