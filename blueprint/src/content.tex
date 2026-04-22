@@ -734,6 +734,61 @@ If you're unsure: read the first half of this chapter carefully
 second half. You can always come back for it when you're ready to
 tackle attention.
 
+\subsection*{For readers of the first book}
+
+If you're coming to this book from \emph{Convolutional Neural
+Networks with Swift for TensorFlow}, you already know most of the
+architectures and the forward-pass intuition: VGG, ResNet,
+MobileNet, and EfficientNet are all familiar, and you've built and
+trained them at least once.
+
+Chapters~\ref{chap:layernorm} and~\ref{chap:attention} will be new
+material even on the forward-pass side. I shipped the final draft
+of the first book in July 2020; in late August the grapevine started
+whispering that something attention-shaped was coming, and the ViT
+paper landed on arXiv that October. Everything in this book that
+looks like a transformer --- LayerNorm, GELU, multi-head attention
+--- postdates the first book and will be genuinely new for you. Otherwise,
+this book is the same architectures brought under the additional
+scrutiny of a formal backward pass.
+
+Concretely, that means:
+
+\begin{itemize}
+\item \textbf{The architecture introductions in chapters 3-10 will
+  feel redundant.} You can skim past the forward-pass descriptions
+  --- they're first-book content, kept here so the chapters stay
+  self-contained --- and head straight for the
+  \texttt{*\_has\_vjp} theorems and the
+  \texttt{\textbackslash uses\{\}} annotations that pin down the
+  backward pass.
+
+\item \textbf{Chapter 2 is the new material for you.} The
+  tensor-calculus chapter is what the first book didn't have --- where the
+  gradients get formalized. If you only read one chapter thoroughly,
+  make it this one.
+
+\item \textbf{Training recipe upgraded.} Book 1's codegen trained
+  with plain SGD at learning rate 0.002 and no other tricks. This
+  book adopts the modern recipe --- Adam, cosine decay, linear
+  warmup, weight decay, label smoothing --- which is how the
+  accuracy numbers in this book's results table were achieved.
+  The full recipe and each component's contribution are detailed
+  in Chapter~\ref{chap:residual} (ResNet), where the ablation
+  comparisons live.
+
+\item \textbf{The codegen is new.} Book 1's Swift-for-TensorFlow
+  pipeline is replaced with Lean 4 \(\to\) StableHLO MLIR \(\to\) IREE
+  \(\to\) GPU. Mostly doesn't affect the math; it changes where the
+  gradients are computed (at codegen time in Lean, not at runtime
+  by a framework).
+\end{itemize}
+
+Practical reading style: work through Chapter~\ref{chap:tensor}
+slowly, then skim the rest at the pace of ``forward pass I know
+\(\to\) new \texttt{*\_has\_vjp} theorem \(\to\) see what axioms it
+cites \(\to\) move on.'' The dependency DAG is your friend.
+
 \chapter{MLP: Dense Layer}
 \label{chap:mlp}
 
