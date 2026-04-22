@@ -146,6 +146,10 @@ lean_exe «vjp-oracle-attention» where
   root := `MainVjpOracleAttention
   moreLinkArgs := ireeLink
 
+lean_exe «vjp-oracle-mbconv» where
+  root := `MainVjpOracleMbConv
+  moreLinkArgs := ireeLink
+
 -- ═══════════════════════════════════════════════════════════════════
 -- Tests + benchmarks
 -- ═══════════════════════════════════════════════════════════════════

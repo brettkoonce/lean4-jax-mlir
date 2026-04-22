@@ -78,3 +78,6 @@ lean_exe «vjp-oracle-depthwise» where
 
 lean_exe «vjp-oracle-attention» where
   root := `MainVjpOracleAttention
+
+lean_exe «vjp-oracle-mbconv» where
+  root := `MainVjpOracleMbConv

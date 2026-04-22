@@ -47,7 +47,8 @@ it up from the environment.
 | `conv-pool` | `maxPool_has_vjp` | 1e-3 | 1.18e-04 |
 | `residual` | `biPath_has_vjp` (additive fan-in VJP) | 1e-5 | 3.06e-07 |
 | `depthwise` | depthwise-conv VJP via `.invertedResidual` | 1e-4 | 1.11e-05 |
-| `attention` | ViT block: `patchEmbed` + `transformerBlock_has_vjp_mat` + classifier | 1e-5 | 6.85e-07 |
+| `attention` | ViT block: `patchEmbed` + `transformerBlock_has_vjp_mat` + classifier | 1e-5 | 1.81e-07 |
+| `mbconv` | `elemwiseProduct_has_vjp` (SE gate) + MBConv composition | 1e-5 | 1.56e-06 |
 
 Why tolerances differ:
 - Dense / relu / conv: step-2 Δ sits at or below 1 ULP. 1e-5 is comfortable headroom.
@@ -64,27 +65,27 @@ other transformer variants — each requires a matching
 `init_params_from_file` extension in `jax/Jax/Codegen.lean` for its
 param layout.
 
-## Known init-heuristic wart (surfaced by `attention`)
+## Init heuristic — fixed
 
-`LeanMlir.SpecHelpers.heInitParams` uses a peek-ahead heuristic to
-decide whether a rank-1 tensor after a rank-≥2 tensor is a bias (set
-to 0.0) or a γ/β pair with the following rank-1 tensor (set to 1.0 /
-0.0). For `.patchEmbed` and at transformer-block boundaries this
-misfires:
+Earlier versions of `LeanMlir.SpecHelpers.heInitParams` used a peek-
+ahead heuristic to decide whether a rank-1 tensor following a rank-≥2
+tensor was a bias (0.0) or the γ of a BN/LN pair (1.0 with next rank-1
+as β=0.0). That heuristic misfired on `.patchEmbed` (bias and cls_token
+look like a γ/β pair) and at transformer-block boundaries (`Output_b`
+and `LN2_γ`, `fc2_b` and `FinalLN_γ`), leading to biases = 1.0 and LN
+γ's = 0.0 which collapsed several layers to zero. Both phases saw the
+same bug so the oracle still passed, but attention's numerical signal
+was degenerate.
 
-- `.patchEmbed` emits `(W, bias, cls_token, pos_embed)`. The bias and
-  cls_token are both `[dim]`, so they get treated as a γ/β pair —
-  bias is initialized to 1.0 (should be 0.0) and cls_token to 0.0
-  (arbitrary, but at least 0.0 is benign).
-- Between transformer sublayers, `(Output_b, LN2_γ)` and
-  `(fc2_b, FinalLN_γ)` look like γ/β pairs — so biases land at 1.0
-  and LN γ's land at 0.0, which makes LN2 and Final LN collapse their
-  outputs to 0 until γ learns away from zero during training.
+`heInitParams` now dispatches per Layer constructor — no shape-peek
+heuristic, so the semantics (bias vs γ vs cls_token) are unambiguous.
+`attention` step-2 Δ tightened from 6.85e-07 to 1.81e-07 after the fix:
+we're now verifying a non-degenerate transformer forward pass, and it
+still agrees with JAX autodiff at 1 ULP.
 
-This is a training-init quirk, not a VJP bug. Both phases see the same
-degenerate init so the oracle passes with step-2 Δ at the f32 floor.
-The correct fix is probably to extend heInitParams' heuristic (or mark
-cls_token / pos_embed / LN boundaries in the ADT) — separate change.
+All non-ViT cases produce byte-identical init as before the fix — the
+peek-ahead happened to work correctly for conv+BN layouts and was only
+wrong at patchEmbed / transformer boundaries.
 
 ## Adding a case
 

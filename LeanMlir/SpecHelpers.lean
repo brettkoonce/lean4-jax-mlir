@@ -183,43 +183,167 @@ def sanitizedName (spec : NetSpec) : String :=
 def evalFnName (spec : NetSpec) : String :=
   spec.sanitizedName ++ "_eval.forward_eval"
 
-/-- He-initialize all parameters for a spec. Walks `paramShapes`:
-    - Rank ≥ 2 tensors → He-normal init using fan-in
-    - Rank-1 tensors that come in pairs (gamma, beta) → 1.0 / 0.0 (BN/LN)
-    - Lone rank-1 tensors → 0.0 (biases)
+/-- Emit He-initialized (W) + zero-bias for one conv+bias group. -/
+private def heConvB (oc ic k : Nat) (seed : USize) : IO (ByteArray × ByteArray × USize) := do
+  let W ← F32.heInit seed (oc*ic*k*k).toUSize (Float.sqrt (2.0 / (ic*k*k).toFloat))
+  let b ← F32.const oc.toUSize 0.0
+  return (W, b, seed + 1)
 
-    The pair-vs-lone heuristic mirrors the inline logic that was in every
-    `Main*Train.lean` and matches the order `paramShapes` emits.
-    Returns the concatenated parameter buffer. -/
+/-- Emit He-initialized (W) + γ=1 + β=0 for one convBn group. -/
+private def heConvBn (oc ic k : Nat) (seed : USize) : IO (ByteArray × ByteArray × ByteArray × USize) := do
+  let W ← F32.heInit seed (oc*ic*k*k).toUSize (Float.sqrt (2.0 / (ic*k*k).toFloat))
+  let g ← F32.const oc.toUSize 1.0
+  let b ← F32.const oc.toUSize 0.0
+  return (W, g, b, seed + 1)
+
+/-- Emit He-initialized (W) + zero-bias for one dense layer. -/
+private def heDense (fi fo : Nat) (seed : USize) : IO (ByteArray × ByteArray × USize) := do
+  let W ← F32.heInit seed (fi*fo).toUSize (Float.sqrt (2.0 / fi.toFloat))
+  let b ← F32.const fo.toUSize 0.0
+  return (W, b, seed + 1)
+
+/-- Emit γ=1, β=0 for one LayerNorm. -/
+private def heLN (dim : Nat) : IO (ByteArray × ByteArray) := do
+  let g ← F32.const dim.toUSize 1.0
+  let b ← F32.const dim.toUSize 0.0
+  return (g, b)
+
+/-- He-initialize one layer's parameters. Dispatches per layer constructor
+    so semantics (bias vs γ, cls token vs LN start, etc.) are unambiguous —
+    no more shape-peek heuristic that misfires at patchEmbed or
+    transformer-block boundaries. -/
+private def heInitLayer (l : Layer) (seed : USize) : IO (Array ByteArray × USize) := do
+  match l with
+  | .dense fi fo _ =>
+    let (W, b, s') ← heDense fi fo seed
+    return (#[W, b], s')
+  | .conv2d ic oc k _ _ =>
+    let (W, b, s') ← heConvB oc ic k seed
+    return (#[W, b], s')
+  | .convBn ic oc k _ _ =>
+    let (W, g, b, s') ← heConvBn oc ic k seed
+    return (#[W, g, b], s')
+  | .residualBlock ic oc nBlocks firstStride =>
+    let needsProj := !(ic == oc && firstStride == 1)
+    let mut parts : Array ByteArray := #[]
+    let mut s := seed
+    for bi in [:nBlocks] do
+      let blockIc := if bi == 0 then ic else oc
+      let (W1, g1, b1, s') ← heConvBn oc blockIc 3 s
+      parts := parts.push W1 |>.push g1 |>.push b1
+      let (W2, g2, b2, s'') ← heConvBn oc oc 3 s'
+      parts := parts.push W2 |>.push g2 |>.push b2
+      s := s''
+      if bi == 0 && needsProj then
+        let (Wp, gp, bp, s''') ← heConvBn oc ic 1 s
+        parts := parts.push Wp |>.push gp |>.push bp
+        s := s'''
+    return (parts, s)
+  | .bottleneckBlock ic oc nBlocks firstStride =>
+    let mid := oc / 4
+    let needsProj := !(ic == oc && firstStride == 1)
+    let mut parts : Array ByteArray := #[]
+    let mut s := seed
+    for bi in [:nBlocks] do
+      let blockIc := if bi == 0 then ic else oc
+      let (W1, g1, b1, s') ← heConvBn mid blockIc 1 s
+      parts := parts.push W1 |>.push g1 |>.push b1
+      let (W2, g2, b2, s'') ← heConvBn mid mid 3 s'
+      parts := parts.push W2 |>.push g2 |>.push b2
+      let (W3, g3, b3, s''') ← heConvBn oc mid 1 s''
+      parts := parts.push W3 |>.push g3 |>.push b3
+      s := s'''
+      if bi == 0 && needsProj then
+        let (Wp, gp, bp, sp) ← heConvBn oc ic 1 s
+        parts := parts.push Wp |>.push gp |>.push bp
+        s := sp
+    return (parts, s)
+  | .invertedResidual ic oc expand _stride n =>
+    let mut parts : Array ByteArray := #[]
+    let mut s := seed
+    for bi in [:n] do
+      let blockIc := if bi == 0 then ic else oc
+      let mid := blockIc * expand
+      if expand != 1 then
+        let (W, g, b, s') ← heConvBn mid blockIc 1 s
+        parts := parts.push W |>.push g |>.push b
+        s := s'
+      let (Wdw, gdw, bdw, s') ← heConvBn mid 1 3 s
+      parts := parts.push Wdw |>.push gdw |>.push bdw
+      let (Wp, gp, bp, s'') ← heConvBn oc mid 1 s'
+      parts := parts.push Wp |>.push gp |>.push bp
+      s := s''
+    return (parts, s)
+  | .mbConv ic oc expand kSize _stride n useSE =>
+    let mut parts : Array ByteArray := #[]
+    let mut s := seed
+    for bi in [:n] do
+      let blockIc := if bi == 0 then ic else oc
+      let mid := blockIc * expand
+      let seMid := Nat.max 1 (mid / 4)
+      if expand != 1 then
+        let (W, g, b, s') ← heConvBn mid blockIc 1 s
+        parts := parts.push W |>.push g |>.push b
+        s := s'
+      let (Wdw, gdw, bdw, s') ← heConvBn mid 1 kSize s
+      parts := parts.push Wdw |>.push gdw |>.push bdw
+      s := s'
+      if useSE then
+        let (Wsq, bsq, s'') ← heConvB seMid mid 1 s
+        parts := parts.push Wsq |>.push bsq
+        s := s''
+        let (Wex, bex, s''') ← heConvB mid seMid 1 s
+        parts := parts.push Wex |>.push bex
+        s := s'''
+      let (Wp, gp, bp, sp) ← heConvBn oc mid 1 s
+      parts := parts.push Wp |>.push gp |>.push bp
+      s := sp
+    return (parts, s)
+  | .patchEmbed ic dim p nP =>
+    -- Conv W, bias=0, cls=0, pos=He init (fan-in is nP+1).
+    let W ← F32.heInit seed (dim*ic*p*p).toUSize (Float.sqrt (2.0 / (ic*p*p).toFloat))
+    let b ← F32.const dim.toUSize 0.0
+    let cls ← F32.const dim.toUSize 0.0
+    let pos ← F32.heInit (seed + 1) ((nP+1)*dim).toUSize (Float.sqrt (2.0 / (nP+1).toFloat))
+    return (#[W, b, cls, pos], seed + 2)
+  | .transformerEncoder dim _heads mlpDim nBlocks =>
+    let mut parts : Array ByteArray := #[]
+    let mut s := seed
+    for _bi in [:nBlocks] do
+      let (g1, b1) ← heLN dim
+      parts := parts.push g1 |>.push b1
+      let (Wq, bq, s') ← heDense dim dim s
+      parts := parts.push Wq |>.push bq
+      let (Wk, bk, s'') ← heDense dim dim s'
+      parts := parts.push Wk |>.push bk
+      let (Wv, bv, s''') ← heDense dim dim s''
+      parts := parts.push Wv |>.push bv
+      let (Wo, bo, s4) ← heDense dim dim s'''
+      parts := parts.push Wo |>.push bo
+      let (g2, b2) ← heLN dim
+      parts := parts.push g2 |>.push b2
+      let (Wfc1, bfc1, s5) ← heDense dim mlpDim s4
+      parts := parts.push Wfc1 |>.push bfc1
+      let (Wfc2, bfc2, s6) ← heDense mlpDim dim s5
+      parts := parts.push Wfc2 |>.push bfc2
+      s := s6
+    -- Final LN after all blocks
+    let (gf, bf) ← heLN dim
+    parts := parts.push gf |>.push bf
+    return (parts, s)
+  | _ =>
+    -- Unsupported layer (no trainable params OR not in paramShapes).
+    -- flatten / maxPool / globalAvgPool / reshape have no params → empty.
+    return (#[], seed)
+
+/-- He-initialize all parameters for a spec, walking layer-by-layer. -/
 def heInitParams (spec : NetSpec) : IO ByteArray := do
   let mut paramParts : Array ByteArray := #[]
   let mut seed : USize := 42
-  let shapes := spec.paramShapes
-  let mut si : Nat := 0
-  while si < shapes.size do
-    let shape := shapes[si]!
-    let n := shape.foldl (· * ·) 1
-    if shape.size >= 2 then
-      let fanIn := if shape.size == 4 then shape[1]! * shape[2]! * shape[3]! else shape[0]!
-      paramParts := paramParts.push (← F32.heInit seed n.toUSize (Float.sqrt (2.0 / fanIn.toFloat)))
-      seed := seed + 1
-      si := si + 1
-      -- Look at the next 1D entries: pair → BN/LN gamma+beta (1.0, 0.0),
-      --                              single → bias (0.0)
-      if si < shapes.size && shapes[si]!.size == 1 then
-        let n1 := shapes[si]![0]!
-        if si + 1 < shapes.size && shapes[si + 1]!.size == 1 && shapes[si + 1]![0]! == n1 then
-          paramParts := paramParts.push (← F32.const n1.toUSize 1.0)  -- gamma
-          si := si + 1
-          paramParts := paramParts.push (← F32.const (shapes[si]![0]!).toUSize 0.0)  -- beta
-          si := si + 1
-        else
-          paramParts := paramParts.push (← F32.const n1.toUSize 0.0)  -- bias
-          si := si + 1
-    else
-      -- Lone rank-1 (e.g. ViT cls token) → zeros
-      paramParts := paramParts.push (← F32.const n.toUSize 0.0)
-      si := si + 1
+  for l in spec.layers do
+    let (parts, s') ← heInitLayer l seed
+    paramParts := paramParts ++ parts
+    seed := s'
   return F32.concat paramParts
 
 end NetSpec

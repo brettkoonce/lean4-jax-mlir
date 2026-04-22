@@ -34,7 +34,7 @@ fi
 if [ "$#" -gt 0 ]; then
   CASES=("$@")
 else
-  CASES=(dense dense-relu conv convbn conv-pool residual depthwise attention)
+  CASES=(dense dense-relu conv convbn conv-pool residual depthwise attention mbconv)
 fi
 FAIL=0
 

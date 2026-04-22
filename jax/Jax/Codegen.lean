@@ -777,6 +777,34 @@ private def emitInitParams (spec : NetSpec) : String := Id.run do
         -- it by setting ic=1 and oc=mid so the reshape comes out right.
         code := code ++ emitConvBnFromBuf s!"invRes[{bi}] depthwise {mid}" 1 mid 3
         code := code ++ emitConvBnFromBuf s!"invRes[{bi}] project {mid}→{oc}" mid oc 1
+    | .mbConv ic oc expand kSize _stride n useSE =>
+      -- Order: (expand 1×1 convBn if expand != 1) + (depthwise k×k convBn)
+      -- + (SE squeeze 1×1 W+b, SE excite 1×1 W+b) if useSE + (project 1×1
+      -- convBn). SE squeeze/excite use 2-tuples (no BN); everything else
+      -- is convBn 3-tuples. Matches mbconv_block in phase-2 forward.
+      for bi in [:n] do
+        let blockIc := if bi == 0 then ic else oc
+        let mid := blockIc * expand
+        let seMid := Nat.max 1 (mid / 4)
+        if expand != 1 then
+          code := code ++ emitConvBnFromBuf s!"mbConv[{bi}] expand {blockIc}→{mid}" blockIc mid 1
+        code := code ++ emitConvBnFromBuf s!"mbConv[{bi}] depthwise {mid} k={kSize}" 1 mid kSize
+        if useSE then
+          -- SE squeeze: conv W[seMid, mid, 1, 1] + b[seMid]
+          let nSq := seMid * mid
+          code := code ++
+            s!"    # mbConv[{bi}] SE squeeze {mid}→{seMid} (W, b)\n" ++
+            s!"    W = jnp.array(buf[idx:idx+{nSq}].reshape({seMid}, {mid}, 1, 1)); idx += {nSq}\n" ++
+            s!"    b = jnp.array(buf[idx:idx+{seMid}]); idx += {seMid}\n" ++
+            "    params.append((W, b))\n"
+          -- SE excite: conv W[mid, seMid, 1, 1] + b[mid]
+          let nEx := mid * seMid
+          code := code ++
+            s!"    # mbConv[{bi}] SE excite {seMid}→{mid} (W, b)\n" ++
+            s!"    W = jnp.array(buf[idx:idx+{nEx}].reshape({mid}, {seMid}, 1, 1)); idx += {nEx}\n" ++
+            s!"    b = jnp.array(buf[idx:idx+{mid}]); idx += {mid}\n" ++
+            "    params.append((W, b))\n"
+        code := code ++ emitConvBnFromBuf s!"mbConv[{bi}] project {mid}→{oc}" mid oc 1
     | .patchEmbed ic dim p nP =>
       -- Conv W[dim, ic, p, p] + b[dim], then CLS token [dim], then
       -- positional embedding [nP+1, dim] — three tuples total.
