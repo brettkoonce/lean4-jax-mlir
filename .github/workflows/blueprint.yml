@@ -112,20 +112,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y graphviz libgraphviz-dev pkg-config
 
+      - name: Cache TeX Live .deb downloads
+        # Cache the downloaded .debs from /var/cache/apt/archives so
+        # subsequent runs skip the ~500 MB download of texlive-fonts-
+        # extra and friends. We keep the install system-wide (see note
+        # on the install step below) — the cache only speeds up the
+        # download half, not the install half.
+        #
+        # Bump the cache-key suffix (v1 → v2) if you change the package
+        # list below or want to force a refresh.
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-cache
+          key: apt-texlive-${{ runner.os }}-v1
+
       - name: Install TeX Live (system-wide so postinst runs properly)
         # cache-apt-pkgs-action installs into ~/.aptcache/ (user-local
         # prefix); texlive-xetex's postinst expects system paths and
         # silently fails there, leaving xelatex.fmt unbuilt. A plain
         # apt-get install lands TeX under /usr/ where the postinst
-        # actually registers xelatex with fmtutil. Costs ~2 min per run
-        # but is the only reliable path we've found.
+        # actually registers xelatex with fmtutil.
+        #
+        # Two-phase pattern: (1) seed /var/cache/apt/archives from the
+        # user-space ~/apt-cache (which actions/cache knows how to
+        # restore), (2) run the normal apt-get install — which finds
+        # the .debs already on disk and skips the download, (3) copy
+        # any newly-downloaded .debs back to ~/apt-cache so actions/
+        # cache picks them up at job-end. On cache hit this turns a
+        # ~10 min texlive install into ~30 sec.
         run: |
+          mkdir -p ~/apt-cache
+          sudo cp ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y \
             texlive-latex-base texlive-latex-extra texlive-fonts-extra \
             texlive-fonts-recommended texlive-xetex texlive-science \
             texlive-pictures texlive-plain-generic texlive-font-utils \
             texlive-luatex texlive-bibtex-extra latexmk
+          sudo find /var/cache/apt/archives -maxdepth 1 -name "*.deb" \
+            -exec cp -n {} ~/apt-cache/ \;
+          sudo chown -R $(id -u):$(id -g) ~/apt-cache
 
       - name: Verify xelatex format is available
         run: |
