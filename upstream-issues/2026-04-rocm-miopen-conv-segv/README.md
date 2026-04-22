@@ -94,10 +94,63 @@ kernel source by filesystem path and getting a dangling reference — possible
 static-initializer order issue or a kernel-db lookup that can't find a gfx1100
 entry.
 
+## MIOpen debug log (the breadcrumb right before the SIGSEGV)
+
+Running with `MIOPEN_ENABLE_LOGGING=1 MIOPEN_LOG_LEVEL=6` shows MIOpen's
+solver search, the kernel-DB lookup, then silence followed by SIGSEGV.
+The last non-crash entry is always:
+
+```
+MIOpen(HIP): Info2 [LoadBinary] Loading binary for: "naive_conv.cpp.o";
+    args: -DMIOPEN_USE_FP16=0 -DMIOPEN_USE_FP16x4=0 -DMIOPEN_USE_FP16x8=0
+          -DMIOPEN_USE_FP32=1 -DMIOPEN_USE_INT8=0 -DMIOPEN_USE_BFP16=0
+          -DMIOPEN_USE_INT32=0 -DMIOPEN_USE_RNE_BFLOAT16=1
+          -DMIOPEN_FP8_IEEE_EXPONENT_BIAS=0 -DMIOPEN_FP8_CLIPPING=1
+          -mcpu=gfx1100
+MIOpen(HIP): Info2 [Prepare] SELECT kernel_blob, kernel_hash,
+   uncompressed_size FROM kern_db WHERE (kernel_name = 'naive_conv.cpp.o')
+   AND (kernel_args = ' -DMIOPEN_USE_FP16=0 ... -mcpu=gfx1100');
+MIOpen(HIP): Info2 [Measure] Db::FindRecord time: 0.022635 ms
+MIOpen(HIP): Info2 [LoadBinary] Unable to load binary for: "naive_conv.cpp.o";
+   args: -DMIOPEN_USE_FP16=0 -mcpu=gfx1100
+[then SIGSEGV]
+```
+
+So:
+1. MIOpen finds its kernel DB (`~/.cache/miopen/3.5.1.5b515cf1bc/gfx1100_48.ukdb`).
+2. Queries for `naive_conv.cpp.o` — the SQL `SELECT` completes cleanly.
+3. The row comes back with no usable blob → `[LoadBinary] Unable to load`.
+4. MIOpen falls through to the source-compile path (`GetKernelSrc` →
+   `HIPOCProgramImpl::BuildCodeObject`) which SIGSEGVs.
+
+The crash is in the **compile-from-source fallback**, not in the DB
+lookup. The database itself loads fine; it just legitimately lacks a
+precompiled `naive_conv.cpp.o` blob for this set of `MIOPEN_USE_*` flags.
+Falling through to compile-from-source is expected behavior; crashing
+there is the bug.
+
+## Things I tried that don't sidestep the crash
+
+Tested via matrix against `repro_06_tiny_conv.py`, all exit 139:
+
+- `HIP_VISIBLE_DEVICES=0`, `=1`, `ROCR_VISIBLE_DEVICES=0`
+- Deleting `~/.cache/miopen/` entirely → same crash on first run
+- `ROCPROFILER_DISABLE_TOOL=1`, `ROCP_METRICS=none`,
+  `ROCPROFILER_REGISTER_DISABLE=1`
+- `HSA_ENABLE_INTERRUPT=0`
+- `MIOPEN_FIND_MODE=1` (fast fallback)
+- `MIOPEN_DEBUG_DISABLE_FIND_DB=1`
+- `MIOPEN_USER_DB_PATH=/tmp/...` (redirect DB to fresh location)
+
+Crash is deterministic and independent of profiler state, cache state,
+and visibility env vars.
+
 ## Not the trigger
 
-- Multi-GPU setup (`HIP_VISIBLE_DEVICES=0` / `=1` / `ROCR_VISIBLE_DEVICES=0` all crash)
+- Multi-GPU setup (single-GPU variants all crash — see matrix above)
 - Batch size (1×1×4×4 crashes same as 128×32×28×28)
+- Cache state (cleared or populated — see matrix)
+- Rocprofiler-sdk (all disable flags — see matrix)
 - `JAX_PLATFORMS=cpu` correctly routes around it (CPU jax works fine)
 - Pure arange / JIT'd elementwise ops on ROCm work fine
 
