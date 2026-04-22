@@ -15,10 +15,18 @@ Companion code for the upcoming book *Verified Deep Learning with Lean4*
 (follow-up to [Convolutional Neural Networks with Swift for TensorFlow](https://doi.org/10.1007/978-1-4842-6168-2), Apress).
 
 **Current version: `v0.5`** — first cross-backend-verified release. MNIST
-MLP loss agrees to **float32 ULP at step 1** between two independent
-compilation pipelines (Lean→IREE→GPU vs Lean→JAX→XLA) on both NVIDIA and
-AMD hardware. See [`traces/CROSS_BACKEND_RESULTS.md`](traces/CROSS_BACKEND_RESULTS.md)
-for the four-corner verification table.
+MLP *and* CNN training traces agree at the **float32 ULP floor**
+between two independent compilation pipelines (Lean→IREE→GPU vs
+Lean→JAX→XLA) on both NVIDIA and AMD hardware. See
+[`traces/CROSS_BACKEND_RESULTS.md`](traces/CROSS_BACKEND_RESULTS.md)
+for the full four-corner verification tables.
+
+On top of that, a differential-test suite in
+[`tests/vjp_oracle/`](tests/vjp_oracle/) uses JAX's `value_and_grad`
+as an oracle for the hand-derived VJPs in `LeanMlir/Proofs/`. Nine
+test cases cover every axiom family — dense, conv, BN, maxPool,
+residual (biPath), depthwise, SE (elementwise product), attention,
+and the transformer block — each verified to 1–2 ULP of JAX autodiff.
 
 ## Three phases
 
@@ -85,18 +93,58 @@ The training executable, FFI, and IREE runtime are unchanged.
 
 Phase 2 and Phase 3 share the same Lean `NetSpec` ADT but compile through
 *completely independent* stacks (JAX/XLA vs IREE). Differential testing
-confirms both stacks produce the same training dynamics on the same input:
+confirms both stacks produce the same training dynamics on the same input,
+for both MLP (670K params, 12 epochs) and CNN (1.7M params with conv+BN,
+15 epochs):
 
-| diff                              | step 1 Δ | step 2 Δ |
-|-----------------------------------|----------|----------|
-| phase 2 (JAX)  vs phase 3 (IREE)  | ~1e-7    | ~1e-4    |
-| phase 3 ROCm   vs phase 3 CUDA    | **0**    | **0**    |
-| phase 2 CPU    vs phase 2 CUDA    | ~1e-6    | ~1e-4    |
+| diff                              | MLP step 1 Δ | CNN step 1 Δ |
+|-----------------------------------|--------------|--------------|
+| phase 2 (JAX)  vs phase 3 (IREE)  | ~2e-7        | ~1e-5 to 1e-4 |
+| phase 3 ROCm   vs phase 3 CUDA    | **0**        | **0**        |
+| phase 2 CPU    vs phase 2 CUDA    | ~4e-6        | ~1e-4        |
 
-Step-1 agreement to float32 ULP across compilers, plus bit-identical
-output across IREE backends, gives JAX-as-oracle verification of the
-hand-derived VJPs in `MlirCodegen.lean`. Reproducible in 5 minutes via
-`traces/CROSS_BACKEND_RESULTS.md`.
+MLP hits the float32 ULP floor because it's dense-only. CNN's noise
+floor is looser by ~100× because each conv-BN layer does two
+reductions over ~100k-element tensors and XLA's reduction trees differ
+from IREE's — both pipelines do correct math, just with different
+summation orders. Phase 3 ROCm ≡ Phase 3 CUDA is bit-identical at
+step 1 on both networks. Reproducible in 5 minutes via
+[`traces/CROSS_BACKEND_RESULTS.md`](traces/CROSS_BACKEND_RESULTS.md).
+
+### VJP oracle
+
+A separate per-axiom differential test in
+[`tests/vjp_oracle/`](tests/vjp_oracle/) uses JAX's `value_and_grad` as
+a correctness oracle for every hand-derived backward pass in
+`LeanMlir/Proofs/`. Each test case is a minimal NetSpec exercising one
+axiom in isolation; the oracle compares step-2 loss (the first step
+whose value depends on the backward pass) against phase 2's
+autodiff-derived gradients.
+
+Nine cases, all green on mars (ROCm + CPU) and ares (CUDA):
+
+| case | axiom | step 2 Δ |
+|---|---|---|
+| `dense` | `dense_has_vjp` + `softmaxCE_grad` | 2.7e-07 |
+| `dense-relu` | `relu_has_vjp` + `vjp_comp` | 4.8e-07 |
+| `conv` | `conv2d_has_vjp` + `flatten_has_vjp` | 2.2e-07 |
+| `convbn` | `convBn_has_vjp` (BN-mode) | 2.2e-06 |
+| `conv-pool` | `maxPool_has_vjp` (argmax tiebreaks) | 1.2e-04 |
+| `residual` | `biPath_has_vjp` (additive fan-in) | 3.1e-07 |
+| `depthwise` | depthwise-conv VJP via `.invertedResidual` | 1.1e-05 |
+| `mbconv` | `elemwiseProduct_has_vjp` (SE gate) + Swish | 1.6e-06 |
+| `attention` | patchEmbed + `transformerBlock_has_vjp_mat` + classifier | 1.8e-07 |
+
+Run with `tests/vjp_oracle/run.sh`. Adding a new axiom means dropping
+a minimal Lean spec under `tests/vjp_oracle/phase{2,3}/` plus one
+line in the lakefiles — see
+[`tests/vjp_oracle/README.md`](tests/vjp_oracle/README.md).
+
+The oracle also surfaced a real `heInitParams` bug (shape-peek
+heuristic misfiring at patchEmbed + transformer-block boundaries) and
+a JAX-ROCm crash on gfx1100 (filed as
+[ROCm/MIOpen#3955](https://github.com/ROCm/MIOpen/issues/3955); repro
+lives at [`upstream-issues/2026-04-rocm-miopen-conv-segv/`](upstream-issues/2026-04-rocm-miopen-conv-segv/)).
 
 ## Results (Imagenette, 10 classes, 224×224)
 
@@ -251,7 +299,27 @@ lean4-mlir/
 │   ├── MainEfficientNetTrain.lean
 │   ├── MainEfficientNetV2Train.lean
 │   ├── MainVitTrain.lean
-│   └── MainVggTrain.lean
+│   ├── MainVggTrain.lean
+│   ├── MainMlpTrainF32.lean
+│   ├── MainMnistCnnTrain.lean
+│   ├── MainCifarCnnBnTrain.lean
+│   ├── MainCifarTrainF32.lean
+│   └── MainAblation.lean
+│
+├── tests/                  -- unit tests + smoke tests + differential tests
+│   ├── Test*.lean          -- runtime / FFI / codegen sanity tests
+│   ├── BenchResnet.lean
+│   ├── diff_traces.py      -- JSONL trace diff helper
+│   ├── cross_backend_mnist_mlp.sh
+│   └── vjp_oracle/         -- JAX-autodiff oracle for hand-derived VJPs
+│       ├── README.md
+│       ├── run.sh
+│       ├── diff_step.py
+│       ├── phase3/         -- Lean→IREE test trainers
+│       └── phase2/         -- (mirrored at jax/tests/vjp_oracle/phase2/)
+│
+├── upstream-issues/        -- isolated reproducers + backtraces for bugs
+│   └── 2026-04-rocm-miopen-conv-segv/  -- ROCm/MIOpen#3955
 │
 ├── ffi/
 │   ├── iree_ffi.{c,h}      -- IREE runtime wrapper
@@ -263,13 +331,18 @@ lean4-mlir/
 │   ├── README.md
 │   ├── Jax.lean
 │   ├── Jax/{Codegen,Runner}.lean
-│   └── Main*.lean          -- 14 JAX-driven specs
+│   ├── Main*.lean          -- 14 JAX-driven architecture specs
+│   └── tests/vjp_oracle/phase2/  -- phase-2 mirror of oracle specs
 │
 ├── mnist-lean4/            -- phase 1 (pure Lean 4 + C BLAS)
 │
+├── traces/                 -- committed cross-backend training traces
+│   ├── CROSS_BACKEND_RESULTS.md
+│   ├── TRACE_FORMAT.md
+│   └── mnist_{mlp,cnn}.*.jsonl
+│
 ├── data/                   -- downloaded + preprocessed datasets
-├── run_*.sh                -- shell wrappers for tmux env propagation
-└── bug_report{,_sharding}.md  -- ROCm bug reproducers
+└── run_*.sh                -- shell wrappers for tmux env propagation
 ```
 
 ## Supported layers (phase 3 codegen)
