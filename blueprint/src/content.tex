@@ -541,7 +541,7 @@ linearity, product rule, identity, reindex --- has a near-direct
 Mathlib counterpart. The book axiomatizes instead for pragmatic
 reasons: it keeps the proof tree small and self-contained, it makes
 the axiom surface visible at a glance (count them in
-Appendix~\ref{app:axioms}), and it lets the formal content build on a
+Appendix~\ref{app:verification}), and it lets the formal content build on a
 fixed foundation without Mathlib version churn.
 
 The tradeoff: you're trusting these eight calculus facts on the face
@@ -4229,7 +4229,7 @@ lake build LeanMlir.Proofs.MLP LeanMlir.Proofs.CNN \
 If the build succeeds, every theorem in the proof suite type-checked
 against Lean's kernel --- that is the entire verification. Zero
 \texttt{sorry}s, every VJP formula proved or tied to a numerically
-verified axiom (see Appendix~\ref{app:axioms}).
+verified axiom (see Appendix~\ref{app:verification}).
 
 To also run the numerical gradient checks on the axioms:
 
@@ -4263,46 +4263,124 @@ per axiom.
     first (compiles in $\sim$30 seconds).
 \end{itemize}
 
-\chapter{Axioms at a glance}
-\label{app:axioms}
+\chapter{On Verification}
+\label{app:verification}
 
-The proofs in this book compile with \textbf{zero \texttt{sorry}s}. Every
-VJP correctness theorem --- dense layers, convolution, batch normalization,
-residual connections, depthwise convolution, squeeze-and-excitation,
-layer normalization, and self-attention --- is machine-checked by Lean's
-type system. If it builds, it's correct.
+The proofs in this book compile with \textbf{zero \texttt{sorry}s}.
+Every VJP correctness theorem --- dense layers, convolution, batch
+normalization, residual connections, depthwise convolution,
+squeeze-and-excitation, layer normalization, and self-attention ---
+is machine-checked by Lean's type system. If it builds, it's correct.
 
-The proofs are not deep --- they're undergraduate calculus, formalized.
-The value is not that the math is surprising, but that the compiler
-verified it matches the exact MLIR code that runs on the GPU.
+But ``it builds'' is only one of three independent checks we rely on.
+Composition proofs catch math errors, finite-difference checks catch
+formula errors in the axioms themselves, and a parallel JAX pipeline
+catches codegen and implementation errors. Each layer fails in a
+different way, so overlaying them is the defense. This appendix walks
+through all three.
 
-The Verified VJP Proofs suite contains 30 axioms and 45 theorems across
-9 Lean files. The axioms fall into three buckets:
+\section{Axioms}
+
+The Verified VJP Proofs suite contains 30 axioms and 45 theorems
+across 9 Lean files. The axioms fall into three buckets:
 
 \begin{itemize}
   \item \textbf{Calculus primitives} (8): chain rule, linearity, product
-    rule, identity, reindex --- elementary facts about the partial-derivative
-    function \(\pdiv\). Correspond directly to Mathlib \texttt{HasDerivAt}
-    / \texttt{HasFDerivAt} lemmas.
-  \item \textbf{Elementary Jacobian facts} (about 11): the Jacobian of a
-    specific operation (ReLU diagonal, softmax rank-1, layer-norm 3-term,
-    etc.), stated in \(\pdiv\)-land rather than bridging to Mathlib.
+    rule, identity, reindex --- elementary facts about the
+    partial-derivative function \(\pdiv\). Correspond directly to
+    Mathlib \texttt{HasDerivAt} / \texttt{HasFDerivAt} lemmas.
+  \item \textbf{Elementary Jacobian facts} (about 11): the Jacobian
+    of a specific operation (ReLU diagonal, softmax rank-1,
+    layer-norm 3-term, etc.), stated in \(\pdiv\)-land rather than
+    bridging to Mathlib.
   \item \textbf{Bundled layer VJPs} (about 11): each opaque forward
-    (\texttt{conv2d}, \texttt{depthwiseConv2d}, \texttt{mhsa\_layer}) paired
-    with a bundled \(\HasVJP\) existence claim. Gradient-checked numerically
-    in \texttt{check\_axioms.py}.
+    (\texttt{conv2d}, \texttt{depthwiseConv2d}, \texttt{mhsa\_layer})
+    paired with a bundled \(\HasVJP\) existence claim.
 \end{itemize}
 
-The bundled-primitive axioms are the only ones not proved symbolically
-in Lean --- they're instead validated by \textbf{finite-difference
-gradient checks} in \texttt{LeanMlir/Proofs/check\_axioms.py}. For each
-opaque forward, the script perturbs the input by $\varepsilon$, compares
-the claimed VJP to the centered difference
-$(f(x + \varepsilon) - f(x - \varepsilon)) / 2\varepsilon$, and asserts
-agreement within tolerance. Between Lean's composition proofs and
-Python's numerical checks, nothing is taken on faith.
+Everything else --- 45 theorems --- is composition over these axioms,
+glued by the three structural rules (chain, additive fan-in,
+multiplicative fan-in) and five closed-form Jacobian tricks
+(diagonal, sparse Toeplitz, binary selection, rank-1 correction,
+outer product). The book's central claim --- ``new architectures,
+no new calculus'' --- is exactly this: each chapter after
+Chapter~\ref{chap:tensor} adds at most two or three bundled axioms
+for its new primitive and a small number of composition theorems to
+stitch them in. The structural calculus itself never changes.
 
-Everything else --- 45 theorems --- is composition over these axioms, glued
-by the three structural rules (chain, fan-in, product) and five
-closed-form Jacobian tricks (diagonal, sparse toeplitz, binary selection,
-rank-1 correction, outer product).
+\section{Finite-difference gradient checks}
+
+The bundled-primitive axioms in the third bucket above are the only
+ones not proved symbolically in Lean --- they're validated by
+finite-difference gradient checks in
+\texttt{LeanMlir/Proofs/check\_axioms.py}. For each opaque forward,
+the script perturbs the input by \(\varepsilon\), compares the
+claimed VJP against the centered difference
+\((f(x + \varepsilon) - f(x - \varepsilon)) / 2\varepsilon\), and
+asserts agreement within tolerance. Between Lean's composition
+proofs and Python's numerical checks, nothing is taken on faith.
+
+FD is cheap, easy to reason about, and tight enough for spot-checking
+formulas (\(\sim 10^{-5}\) at \(\varepsilon = 10^{-3}\), bounded
+below by the truncation-vs-rounding tradeoff). What it can't do:
+probe what the \emph{compiled} code actually computes on the GPU ---
+only what the axiom's formula says in Python. And it struggles at
+non-smooth points (ReLU at zero, maxPool tiebreaks, GELU's
+derivative-sign transitions) where the limit definition breaks down.
+For those gaps and for end-to-end pipeline verification, the third
+layer takes over.
+
+\section{The JAX parallel pipeline}
+
+A separate Lean \(\to\) JAX \(\to\) XLA pipeline
+(\texttt{jax/Jax/Codegen.lean}, \(\sim 1100\) lines) produces an
+idiomatic JAX training script from the same \texttt{NetSpec} the
+primary Lean \(\to\) StableHLO MLIR \(\to\) IREE pipeline consumes.
+XLA is the compiler JAX uses to produce GPU code (the same backend
+that powers TensorFlow and other frameworks); IREE is its Lean-side
+counterpart. The two stacks are independent end to end ---
+different codegen, different runtime, different kernels --- which
+is why agreement between them is a meaningful cross-check. Running
+both from identical initial parameters on identical batches gives
+us a pair of trace files, one per stack, that should agree modulo
+float32 rounding if both pipelines compute the same math.
+
+The agreement is very tight. For the MNIST MLP, step-1 losses agree
+to \(\sim 2 \times 10^{-7}\) --- float32 ULP --- across the
+JAX-CPU-vs-IREE-ROCm comparison, and phase-3 IREE output is
+\textbf{bit-identical across AMD and NVIDIA hardware} at step 1.
+For the MNIST CNN with batch norm, step-1 agrees to
+\(\sim 10^{-4}\), looser because variance reductions over
+\(\sim 100\)k-element tensors amplify cross-compiler reduction-tree
+differences --- both pipelines do correct math; they just sum it
+in different orders. Full results are committed to the repo as
+reproducible JSON-Lines traces; see
+\texttt{traces/CROSS\_BACKEND\_RESULTS.md}.
+
+Layered on top of the end-to-end trace diff is a per-axiom
+differential test in \texttt{tests/vjp\_oracle/}, which compares
+each Lean-proved backward pass against JAX's
+\texttt{value\_and\_grad} autodiff on a minimal one-step training
+run. Nine cases --- dense, dense+ReLU, conv, conv+BN, conv+maxPool,
+residual, depthwise, SE, attention --- each agree with JAX autodiff
+at 1--2 ULP of step-2 loss. Any future hand-derived VJP added to
+the Lean proof base can be validated by a one-step comparison
+against JAX, catching algebraic errors that FD would miss (sign
+flips, wrong contraction axis, swapped indices).
+
+Together, the three layers catch three different kinds of bugs:
+
+\begin{itemize}
+  \item \textbf{Formal proofs} fail if the math is wrong --- but
+    type-checking doesn't prove the axioms are physically right,
+    only that the theorems follow from them.
+  \item \textbf{FD gradient checks} fail if a bundled axiom's
+    formula is wrong --- but FD can't spot compiler bugs or
+    tiebreak disagreements.
+  \item \textbf{The JAX-parallel pipeline} fails if either compiler
+    has a codegen bug, if the runtime drifts, or if the
+    hand-derived VJP disagrees with JAX autodiff --- the places
+    formal proofs and FD can't see.
+\end{itemize}
+
+Each layer fails differently. Overlaying them is the guarantee.
