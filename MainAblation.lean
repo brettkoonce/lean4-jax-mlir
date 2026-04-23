@@ -310,6 +310,115 @@ def adamCosineAug (epochs : Nat := 30) : TrainConfig where
   labelSmoothing := 0.0
 
 -- ═══════════════════════════════════════════════════════════════════
+-- Chapter 6: ResNet-34 Imagenette — leave-one-out recipe ablation.
+--
+-- Seven configs: one full recipe + six identical copies each missing
+-- one component. Each ablation run answers "given everything else is
+-- present, what does THIS ingredient earn us?" Leaving the baseline
+-- out deliberately — "plain SGD at lr=0.002" from the first book
+-- would need its own LR sweep to converge cleanly on ResNet-34, and
+-- chasing a fair baseline is more expensive than the ablation itself.
+-- The Chapter cites the first book's numbers as the implicit
+-- starting point; the leave-one-out table below measures lift.
+-- ═══════════════════════════════════════════════════════════════════
+
+def resnet34Spec : NetSpec where
+  name := "ResNet-34"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .convBn 3 64 7 2 .same,
+    .maxPool 2 2,
+    .residualBlock  64  64 3 1,
+    .residualBlock  64 128 4 2,
+    .residualBlock 128 256 6 2,
+    .residualBlock 256 512 3 2,
+    .globalAvgPool,
+    .dense 512 10 .identity
+  ]
+
+def r34Full : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 3
+  augment      := true
+  labelSmoothing := 0.1
+
+-- Leave-one-out: full recipe minus Adam (→ SGD + 0.9 momentum).
+-- LR bumped to 0.01 (typical SGD+momentum LR for ResNet-scale); at
+-- Adam's 0.001 SGD would underperform purely due to undershoot rather
+-- than recipe-structure effects. Chosen to make the comparison fair.
+def r34NoAdam : TrainConfig where
+  learningRate := 0.01   -- see comment above
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := false
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 3
+  augment      := true
+  labelSmoothing := 0.1
+
+def r34NoCosine : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := false
+  warmupEpochs := 3
+  augment      := true
+  labelSmoothing := 0.1
+
+def r34NoWarmup : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 0
+  augment      := true
+  labelSmoothing := 0.1
+
+def r34NoWd : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0
+  cosineDecay  := true
+  warmupEpochs := 3
+  augment      := true
+  labelSmoothing := 0.1
+
+def r34NoSmooth : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 3
+  augment      := true
+  labelSmoothing := 0.0
+
+def r34NoAug : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 3
+  augment      := false
+  labelSmoothing := 0.1
+
+-- ═══════════════════════════════════════════════════════════════════
 -- Ablation registry
 -- ═══════════════════════════════════════════════════════════════════
 
@@ -386,7 +495,18 @@ def ablations : List (String × AblationRun) := [
 
   -- Chapter 3 (R34-aligned, GAP + single-FC head): does BN matter here?
   ("cifar-lite-nobn-sgd002", ⟨cifarCnnLiteNoBn, sgdLowLr2 30, .cifar10, "data"⟩),
-  ("cifar-lite-bn-sgd002",   ⟨cifarCnnLiteBn,   sgdLowLr2 30, .cifar10, "data"⟩)
+  ("cifar-lite-bn-sgd002",   ⟨cifarCnnLiteBn,   sgdLowLr2 30, .cifar10, "data"⟩),
+
+  -- Chapter 6: ResNet-34 Imagenette leave-one-out recipe ablation.
+  -- r34-full is the headline; each r34-no-X removes one ingredient
+  -- from the full recipe. Compare rows to measure marginal lift.
+  ("r34-full",      ⟨resnet34Spec, r34Full,     .imagenette, "data/imagenette"⟩),
+  ("r34-no-adam",   ⟨resnet34Spec, r34NoAdam,   .imagenette, "data/imagenette"⟩),
+  ("r34-no-cosine", ⟨resnet34Spec, r34NoCosine, .imagenette, "data/imagenette"⟩),
+  ("r34-no-warmup", ⟨resnet34Spec, r34NoWarmup, .imagenette, "data/imagenette"⟩),
+  ("r34-no-wd",     ⟨resnet34Spec, r34NoWd,     .imagenette, "data/imagenette"⟩),
+  ("r34-no-smooth", ⟨resnet34Spec, r34NoSmooth, .imagenette, "data/imagenette"⟩),
+  ("r34-no-aug",    ⟨resnet34Spec, r34NoAug,    .imagenette, "data/imagenette"⟩)
 ]
 
 def main (args : List String) : IO Unit := do
