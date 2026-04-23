@@ -10,6 +10,8 @@ blueprint/lean_decls
 blueprint/src/*.aux
 blueprint/src/*.paux
 blueprint/src/*.out
+blueprint/src/*.toc
+blueprint/src/*.pdf
 
 # Training logs — ignore at root, curated ones live under logs/
 *.log
