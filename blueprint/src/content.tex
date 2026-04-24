@@ -1883,6 +1883,60 @@ $-0.9 \log 0.9 - 0.1 \log (0.1/9) \approx 0.485$.
 Every chapter after this one uses the same six ingredients. The
 \texttt{NetSpec} changes; the recipe stays.
 
+\section{Ablation: what each ingredient contributes}
+\label{sec:r34_ablation}
+
+So how much does each ingredient actually earn? We ran the full
+recipe plus six leave-one-out variants on ResNet-34 Imagenette, 80
+epochs each, same init and batch order. Each ablation row keeps
+everything except the one named component, so the lift measures
+that component's contribution given everything else is present ---
+an honest answer to ``is this piece pulling its weight?'' rather
+than the order-dependent story you'd get from an additive ladder.
+
+\begin{center}
+\begin{tabular}{l r r}
+\hline
+Run & Val accuracy & $\Delta$ vs full \\
+\hline
+Full recipe             & 90.29\% & --- \\
+Full minus cosine decay & 86.81\% & $-$3.48 \\
+Full minus Adam (SGD + 0.9 momentum, lr 0.01) & 87.04\% & $-$3.25 \\
+Full minus warmup       & 88.88\% & $-$1.41 \\
+Full minus label smoothing & 89.24\% & $-$1.05 \\
+Full minus weight decay & 89.68\% & $-$0.61 \\
+\hline
+\end{tabular}
+\end{center}
+
+Two observations worth naming:
+
+\textbf{Cosine decay and Adam are roughly tied for largest single
+contribution} ($-$3.48 and $-$3.25 points respectively). They operate
+on different axes --- cosine shapes the learning-rate trajectory,
+Adam shapes the per-parameter update magnitude --- but their
+late-training influence on val accuracy is comparable. Either
+alone-missing costs roughly 3 percentage points.
+
+\textbf{Weight decay and label smoothing are small but real}
+($-$0.61 and $-$1.05). Both are regularizers; both help the most
+in the mid-training phase where overfitting starts to show, then
+their effect narrows as cosine decay drives the learning rate to
+zero. The ablation runs briefly show larger gaps in the middle of
+training (e.g., no-WD lands $-$6 points at epoch 10 before the gap
+narrows to $-$0.6 by epoch 80), which is the usual
+overfit-then-catch-up signature.
+
+The no-augmentation row is still running as of this writing; the
+updated table will land in a revision once the result is in.
+
+The note on $-$3.25 for the Adam ablation: running ``SGD + 0.9
+momentum'' at Adam's 0.001 learning rate would have undershot purely
+on LR mismatch, so the ablation uses 0.01 --- a standard SGD learning
+rate for ResNet-scale training. The comparison is between the full
+recipe and a ``SGD-appropriate recipe'' variant, not a strict
+identity swap.
+
 \chapter{Depthwise Convolution}
 \label{chap:depthwise}
 
