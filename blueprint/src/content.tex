@@ -1215,7 +1215,8 @@ lives in this one line. There is no Python. There is no graph
 construction per-step. There is no autograd interpreter. The
 training step was compiled once, at startup, and every subsequent
 step is a single dispatched vmfb call. That's why training at
-batch 128 runs at $\sim$20\,ms per step on a consumer GPU.
+batch 128 runs at $\sim$20\,ms per step on a consumer GPU
+(7900 XTX), $\sim$80\,ms on a 4060 Ti.
 
 \textbf{5. Validation.} Every 10 epochs (and always at the end) we
 swap in the forward-only eval vmfb, which uses BN's \emph{running}
