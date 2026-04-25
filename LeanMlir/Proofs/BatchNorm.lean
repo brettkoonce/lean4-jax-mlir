@@ -1,5 +1,7 @@
 import LeanMlir.Proofs.Tensor
 import Mathlib.Data.Real.Sqrt
+import Mathlib.Analysis.SpecialFunctions.Sqrt
+import Mathlib.Analysis.Calculus.FDeriv.Mul
 
 /-!
 # Batch Normalization VJP
@@ -394,17 +396,41 @@ theorem pdiv_bnCentered (n : Nat) (x : Vec n) (i j : Fin n) :
   simp
   ring
 
-/-- **Smoothness of `bnIstdBroadcast`** — axiomatized.
+/-- **Smoothness of `bnIstdBroadcast`** — proved from Mathlib calculus
+    (VJP.md follow-up C).
 
-    `bnIstdBroadcast n ε x = 1/√(σ²(x) + ε)` is C^∞ when `ε > 0`
-    (since `σ²(x) + ε ≥ ε > 0`, so `Real.sqrt` and reciprocal are
-    smooth at every point of the domain). The Mathlib derivation
-    via `Real.sqrt`'s `hasDerivAt` and `HasDerivAt.inv` is doable
-    but not in scope here — we axiomatize alongside the existing
-    `pdiv_bnIstdBroadcast` so `pdiv_mul` and `vjp_comp` calls in
-    the BN chain can discharge their `Differentiable` hypotheses. -/
-axiom bnIstdBroadcast_diff (n : Nat) (ε : ℝ) (hε : 0 < ε) :
-    Differentiable ℝ (bnIstdBroadcast n ε)
+    `bnIstdBroadcast n ε x = 1/√(σ²(x) + ε)`. Since `σ²(x) ≥ 0` (sum
+    of squares ÷ n ≥ 0) and `ε > 0`, the argument `bnVar + ε` is
+    everywhere positive, so `Real.sqrt` is differentiable
+    (`Differentiable.sqrt` with non-zero hypothesis), and its
+    reciprocal is differentiable too. -/
+theorem bnIstdBroadcast_diff (n : Nat) (ε : ℝ) (hε : 0 < ε) :
+    Differentiable ℝ (bnIstdBroadcast n ε) := by
+  unfold bnIstdBroadcast bnIstd
+  rw [differentiable_pi]
+  intro _
+  -- Goal: Differentiable ℝ (fun x => 1 / Real.sqrt (bnVar n x + ε))
+  have h_var : Differentiable ℝ (fun x : Vec n => bnVar n x + ε) := by
+    unfold bnVar bnMean; fun_prop
+  have h_var_nonneg : ∀ x : Vec n, 0 ≤ bnVar n x := by
+    intro x
+    unfold bnVar
+    apply div_nonneg
+    · exact Finset.sum_nonneg (fun _ _ => mul_self_nonneg _)
+    · exact Nat.cast_nonneg _
+  have h_arg_pos : ∀ x : Vec n, 0 < bnVar n x + ε := fun x => by
+    have := h_var_nonneg x; linarith
+  have h_arg_ne : ∀ x : Vec n, bnVar n x + ε ≠ 0 := fun x => (h_arg_pos x).ne'
+  have h_sqrt : Differentiable ℝ (fun x : Vec n => Real.sqrt (bnVar n x + ε)) :=
+    h_var.sqrt h_arg_ne
+  have h_sqrt_ne : ∀ x : Vec n, Real.sqrt (bnVar n x + ε) ≠ 0 := fun x =>
+    (Real.sqrt_pos.mpr (h_arg_pos x)).ne'
+  -- 1 / √(...) = (√(...))⁻¹
+  have h_eq : (fun x : Vec n => 1 / Real.sqrt (bnVar n x + ε)) =
+              (fun x : Vec n => (Real.sqrt (bnVar n x + ε))⁻¹) := by
+    funext x; rw [one_div]
+  rw [h_eq]
+  exact fun x => (h_sqrt x).inv (h_sqrt_ne x)
 
 /-- **Broadcast inverse-stddev Jacobian** — axiomatized elementary fact.
 

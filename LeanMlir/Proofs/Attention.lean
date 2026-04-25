@@ -5,6 +5,9 @@ import LeanMlir.Proofs.Residual
 import LeanMlir.Proofs.SE
 import LeanMlir.Proofs.LayerNorm
 import Mathlib.Analysis.SpecialFunctions.ExpDeriv
+import Mathlib.Analysis.Calculus.Deriv.Inv
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+import Mathlib.Analysis.Complex.Trigonometric
 
 /-!
 # Attention — the Capstone
@@ -93,17 +96,28 @@ lemma dense_per_token_flat_diff {N inD outD : Nat}
                    (Mat.unflatten v))) := by
   unfold Mat.unflatten Mat.flatten dense; fun_prop
 
+/-- **Real.tanh is differentiable everywhere** — bridged via
+    `Real.tanh_eq_sinh_div_cosh` and `Real.cosh_pos`. Tagged for
+    `fun_prop` so downstream gelu-style smoothness goals dispatch. -/
+@[fun_prop]
+theorem Real.differentiable_tanh : Differentiable ℝ Real.tanh := by
+  have h_eq : Real.tanh = (fun x : ℝ => Real.sinh x / Real.cosh x) :=
+    funext Real.tanh_eq_sinh_div_cosh
+  rw [h_eq]
+  intro x
+  exact (Real.differentiable_sinh.differentiableAt).div
+          Real.differentiable_cosh.differentiableAt
+          (Real.cosh_pos x).ne'
+
 /-- Differentiability of the flattened per-token GELU map.
-    `geluScalar` is `C^∞` (composition of polynomials, `Real.tanh`,
-    `Real.sqrt` of a positive constant), but Mathlib's `Real.tanh`
-    Differentiable lemma isn't tagged for `fun_prop` in this toolchain
-    snapshot. **Axiomatized** for the same reason as `rowSoftmax_flat_diff`
-    and `bnIstdBroadcast_diff` — Mathlib has the calculus, the project
-    hasn't built the bridge yet. -/
-axiom gelu_per_token_flat_diff (N D : Nat) :
+    `geluScalar = 0.5 · x · (1 + tanh(√(2/π)(x + 0.044715·x³)))`. With
+    `Real.differentiable_tanh` available to `fun_prop`, the proof
+    discharges automatically. -/
+theorem gelu_per_token_flat_diff (N D : Nat) :
     Differentiable ℝ (fun v : Vec (N * D) =>
       Mat.flatten ((fun X : Mat N D => fun n => gelu D (X n))
-                   (Mat.unflatten v)))
+                   (Mat.unflatten v))) := by
+  unfold Mat.unflatten Mat.flatten gelu geluScalar; fun_prop
 
 /-- Differentiability of the flattened per-token LayerNorm map.
     `layerNormForward = bnForward`, which is `bnAffine ∘ bnNormalize`
@@ -240,15 +254,63 @@ parallel.
 noncomputable def rowSoftmax {m n : Nat} (A : Mat m n) : Mat m n :=
   fun i => softmax n (A i)
 
-/-- **Smoothness of `rowSoftmax`** — axiomatized.
+/-- **Smoothness of `rowSoftmax`** — proved from Mathlib calculus
+    (VJP.md follow-up B).
 
-    `rowSoftmax M r c = exp(M r c) / Σⱼ exp(M r j)`. The denominator
-    is everywhere positive, so the function is C^∞ via Mathlib's
-    `Real.exp` calculus. Formal derivation deferred — axiomatize the
-    Differentiable claim so vjpMat_comp can compose through it. -/
-axiom rowSoftmax_flat_diff (m n : Nat) :
+    `rowSoftmax M r c = exp(M r c) / Σⱼ exp(M r j)`. The denominator is
+    everywhere positive (sum of `Real.exp_pos` terms over a nonempty
+    index set when `n ≥ 1`), so the function is C^∞ via `Real.exp`,
+    `Finset.sum`, and `div` with positivity. The `n = 0` case is
+    trivial because `Vec (m * 0) = Vec 0` is 0-dimensional. -/
+theorem rowSoftmax_flat_diff (m n : Nat) :
     Differentiable ℝ (fun v : Vec (m * n) =>
-      Mat.flatten (rowSoftmax (Mat.unflatten v) : Mat m n))
+      Mat.flatten (rowSoftmax (Mat.unflatten v) : Mat m n)) := by
+  match n with
+  | 0 =>
+    -- m * 0 = 0; codomain Vec 0 — trivially differentiable.
+    intro v
+    -- Reduce the goal via funext to the pointwise version, then handle Fin 0 = ∅.
+    have : (fun v : Vec (m * 0) => Mat.flatten (rowSoftmax (Mat.unflatten v) : Mat m 0)) =
+           (fun _ : Vec (m * 0) => fun (k : Fin (m * 0)) => (0 : ℝ)) := by
+      funext v k
+      exact (k.elim0 : False).elim
+    rw [this]
+    exact (differentiable_const _).differentiableAt
+  | n + 1 =>
+    rw [differentiable_pi]
+    intro k
+    set p := finProdFinEquiv.symm k
+    -- Rewrite the k-th coordinate as `Real.exp (linear) * (Σ Real.exp (linear))⁻¹`
+    -- so that we can chain `Differentiable.mul` with `Differentiable.inv`
+    -- (the multivariate `Differentiable.div` requires a scalar domain).
+    have h_fn :
+        (fun v : Vec ((m * (n + 1))) =>
+          Mat.flatten (rowSoftmax (Mat.unflatten v) : Mat m (n + 1)) k) =
+        (fun v : Vec ((m * (n + 1))) =>
+          Real.exp (v (finProdFinEquiv (p.1, p.2))) *
+          (∑ j : Fin (n + 1), Real.exp (v (finProdFinEquiv (p.1, j))))⁻¹) := by
+      funext v
+      show rowSoftmax (Mat.unflatten v) p.1 p.2 = _
+      unfold rowSoftmax softmax Mat.unflatten
+      rw [div_eq_mul_inv]
+    rw [h_fn]
+    have h_num : Differentiable ℝ
+        (fun v : Vec (m * (n + 1)) => Real.exp (v (finProdFinEquiv (p.1, p.2)))) := by
+      fun_prop
+    have h_denom : Differentiable ℝ
+        (fun v : Vec (m * (n + 1)) =>
+          ∑ j : Fin (n + 1), Real.exp (v (finProdFinEquiv (p.1, j)))) := by
+      fun_prop
+    have h_ne : ∀ v : Vec (m * (n + 1)),
+        (∑ j : Fin (n + 1), Real.exp (v (finProdFinEquiv (p.1, j)))) ≠ 0 := by
+      intro v
+      exact (Finset.sum_pos (fun j _ => Real.exp_pos _) Finset.univ_nonempty).ne'
+    -- inv of the denominator is differentiable everywhere (denom ≠ 0).
+    have h_inv : Differentiable ℝ
+        (fun v : Vec (m * (n + 1)) =>
+          (∑ j : Fin (n + 1), Real.exp (v (finProdFinEquiv (p.1, j))))⁻¹) :=
+      fun v => (h_denom v).inv (h_ne v)
+    exact h_num.mul h_inv
 
 /-- **Row-wise softmax VJP** — proved, no sorry.
 
