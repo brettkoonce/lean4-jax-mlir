@@ -1,214 +1,121 @@
-# VJP.md — Foundation Flip Landed; What's Left
+# VJP.md — Foundation Flip Landed; Mechanical Follow-ups Done
 
-**Branch:** merged into `main` (commit `10c0aaf`). Blueprint sync at
-`bde9313`. **23 project axioms.**
+**Branch:** `attention-diff-threading` (4 commits past `main` head `2d4e92e`).
+Cumulative across the foundation-flip + this branch: **23 → 13 project axioms.**
 
-> **Strategy summary.** Attempt #3 used "guarded ReLU" — the soundness
-> analysis from attempts #1 and #2 (still preserved below) showed why
-> the unconditional bilinear rules were inconsistent with `fderiv` and
-> why `pdiv_relu` was inconsistent at non-smooth multi-D points. The
-> fix that worked: guard `pdiv_relu` with `(∀ k, x k ≠ 0)`,
-> axiomatize `relu_has_vjp` (subgradient routing is now an honest
-> convention), and axiomatize `mlp_has_vjp` (composes through ReLU).
-> Foundation flipped cleanly; chapter migrations followed.
+> **Strategy summary.** Foundation flip (attempt #3, "guarded ReLU") landed
+> on `main` and preserved the soundness analysis from attempts #1 and #2
+> (still load-bearing; see "Soundness analysis" below). This branch then
+> walked down the mechanical follow-ups (A–E from the original VJP.md
+> roadmap) and proved everything that wasn't a genuine subgradient/
+> opaque-codegen convention.
 
 ---
 
-## What landed
+## What landed (cumulative)
 
-### Stage 1 — Foundation (Tensor.lean, commit `8290155`)
+### Stage 1 — Foundation (`main`, commit `8290155`)
 
 - `axiom pdiv` → `noncomputable def pdiv f x i j := fderiv ℝ f x (basisVec i) j`.
 - `axiom pdiv_id` / `_const` / `_reindex` → unconditional theorems.
 - `axiom pdiv_add` / `_mul` / `_comp` → theorems with `DifferentiableAt` hypotheses.
 - `pdiv_finset_sum` now requires `∀ s ∈ S, DifferentiableAt ℝ (f s) x`.
-- Internal Tensor.lean cascade threaded: `vjp_comp`, `biPath_has_vjp`,
+- Internal Tensor.lean cascade threaded across `vjp_comp`, `biPath_has_vjp`,
   `elemwiseProduct_has_vjp`, `pdivMat_comp`, `pdivMat_add`, `vjpMat_comp`,
-  `biPathMat_has_vjp`, `pdivMat_matmul_left/right_const`,
-  `pdivMat_scalarScale`, `pdiv3_comp`, `pdiv3_add`, `vjp3_comp`,
-  `biPath3_has_vjp` all take new `Differentiable` arguments.
-- Parallel-track `pdivFD*`, `pdivFDMat*`, `pdivFD3*` blocks deleted
-  (consolidated with the now-flipped main blocks).
-- `pdivFDMat_rowIndep` and `pdivMat_rowIndep` consolidated into one
-  `pdivMat_rowIndep` axiom (the rowIndep proof via `fderiv_pi` is itself
-  a deferred follow-up).
+  `biPathMat_has_vjp`, the matmul/scalar/transpose lemmas, and the rank-3 chain.
 
-**Verification:** `#print axioms Proofs.pdiv_id` / `pdiv_add` / `pdivMat_comp`
-shows only `propext` / `Classical.choice` / `Quot.sound`. No project axioms.
+### Stage 2 — Per-chapter migrations (`main`)
 
-### Stage 2 — Per-chapter migrations
+| Chapter | Notable change |
+|---|---|
+| MLP | Diff threaded through `pdiv_dense*`. **`pdiv_relu` guarded** with `(∀ k, x k ≠ 0)`. **`relu_has_vjp` and `mlp_has_vjp` axiomatized** (subgradient routing). |
+| CNN | Diff threaded through `conv2d_weight_grad_has_vjp` and `conv2d_bias_grad_has_vjp` via `unfold + fun_prop`. `conv2d_has_vjp3` and `maxPool2_has_vjp3` stay axiom (non-smooth ops). |
+| Depthwise | Same recipe as CNN. |
+| BatchNorm | `pdiv_bnAffine` / `pdiv_bnCentered` from foundation. `bn_has_vjp` and friends take `(hε : 0 < ε)`. |
+| Residual + SE + LayerNorm | `Differentiable` arguments threaded through `residual_has_vjp`, `residualProj_has_vjp`, `seBlock_has_vjp`, `layerNorm_has_vjp`. |
+| Attention | Diff helpers (`matmul_left/right_const_flat_diff`, `scalarScale_flat_diff`, `transpose_flat_diff`) via `fun_prop`. SDPA Q/K/V chains proved via `vjpMat_comp`. |
 
-| Chapter | Commit | Notable change |
+### Stage 3 — Branch `attention-diff-threading` (this branch)
+
+| Commit | What | Axiom delta |
 |---|---|---|
-| MLP | `d02fcd9` | Diff threaded through `pdiv_dense*`. **`pdiv_relu` guarded** with `(∀ k, x k ≠ 0)`. **`relu_has_vjp` and `mlp_has_vjp` axiomatized** (subgradient routing). |
-| CNN | `5f3519f` | Diff threaded through `conv2d_weight_grad_has_vjp` and `conv2d_bias_grad_has_vjp` via `unfold + fun_prop`. `conv2d_has_vjp3` and `maxPool2_has_vjp3` stay axiom (non-smooth ops). |
-| Depthwise | `8c8bc0b` | Same recipe as CNN. `depthwise_weight_grad_has_vjp3` and `depthwise_bias_grad_has_vjp` now in pure Mathlib closure. |
-| BatchNorm | `972681c` | `pdiv_bnAffine` and `pdiv_bnCentered` from foundation. `pdiv_bnNormalize`, `bnNormalize_has_vjp`, `bn_has_vjp`, `bn_input_grad_correct` now take `(hε : 0 < ε)`. **New axiom `bnIstdBroadcast_diff`** for sqrt/recip smoothness. |
-| Residual + SE + LayerNorm | `aa6807f` | Added `Differentiable` arguments to `residual_has_vjp`, `residualProj_has_vjp`, `seBlock_has_vjp`. `layerNorm_has_vjp` takes `(hε : 0 < ε)`. |
-| Attention | `7112ce3` | Diff helpers (`matmul_left_const_flat_diff`, `matmul_right_const_flat_diff`, `scalarScale_flat_diff`, `transpose_flat_diff`) via `fun_prop`. **New axiom `rowSoftmax_flat_diff`** for the smooth softmax. `sdpa_Q_chain_has_vjp` and `sdpa_K_chain_has_vjp` threaded properly. **7 high-level chains axiomatized** as a deferral (see "Mechanical follow-ups" below). |
+| `581a771` | **Follow-up A.** Thread `Differentiable` through 8 deferred Attention chains: `transformerMlp_has_vjp_mat`, both sublayers, `transformerBlock_has_vjp_mat`, `transformerTower_has_vjp_mat` (induction on k), `vit_body_has_vjp_mat`, `classifier_flat_has_vjp`, `vit_full_has_vjp`. | −4 (8 chain axioms removed; 4 Diff bridges added: `gelu_per_token_flat_diff`, `layerNorm_per_token_flat_diff`, `mhsa_layer_flat_diff`, `patchEmbed_flat_diff`) |
+| `5532d15` | **Follow-ups B + C + Real.tanh.** `rowSoftmax_flat_diff` (`exp · (sum-exp)⁻¹`, `Differentiable.inv` with `Finset.sum_pos`); `bnIstdBroadcast_diff` (`Differentiable.sqrt` + `Differentiable.inv` over `bnVar + ε > 0`); `gelu_per_token_flat_diff` promoted via a new `Real.differentiable_tanh` `@[fun_prop]` lemma derived from `Real.tanh_eq_sinh_div_cosh` + `Real.cosh_pos`. | −3 |
+| `f8ac5b1` | **Follow-up D + free-rider.** `pdivMat_rowIndep` (was unconditional axiom; **was technically unsound** — counterexample below): now a theorem requiring `Differentiable ℝ g`, proved via `fderiv_apply` + chain rule with `reindexCLM` row-projection + `(rowProj k) (basisVec (i, j)) = basisVec j` if `i = k`, else `0`. Cascade: `rowwise_has_vjp_mat` takes new `hg_diff` hypothesis; new Vec-level `softmax_diff`/`gelu_diff`/`layerNorm_diff`/`dense_diff` lemmas to discharge it. Free-rider: `layerNorm_per_token_flat_diff` axiom → theorem via the same row-projection CLM trick. | −2 |
+| `6f65ba3` | **Follow-up E (first half).** `pdiv_gelu`: `gelu n` has diagonal Jacobian by `fderiv_apply` + chain rule with `geluScalar ∘ ContinuousLinearMap.proj j`, then `fderiv_eq_smul_deriv` to convert scalar `fderiv` ↔ `deriv`. Moves `Real.differentiable_tanh` + `gelu_diff` from Attention.lean to LayerNorm.lean (next to `gelu`'s definition). | −1 |
 
-### Stage 3 — Blueprint sync
-
-- `content.tex` updated: every declaration now matches its actual
-  Lean state (axiom / theorem / definition). 30 axioms → 20 in the
-  blueprint.
-- Macro definitions added to `macros/common.tex` for the new
-  notation (`\fderiv`, `\Differentiable`, `\bnIstdBroadcast`, etc.).
-  Without these the PDF build stops early; xelatex chokes on
-  undefined commands while plasTeX (web build) was permissive.
+**Net for the branch: −10 axioms (23 → 13).**
 
 ---
 
-## Project axiom inventory (23)
+## Project axiom inventory (13)
 
-**Foundation (1):**
-- `pdivMat_rowIndep` — provable via `fderiv_pi`, deferred.
-
-**MLP (4):**
-- `pdiv_relu` — guarded subgradient axiom (subgradient convention).
-- `relu_has_vjp` — existence of HasVJP at non-smooth points.
-- `softmaxCE_grad` — gradient of cross-entropy loss.
+**MLP / activations (4):**
+- `pdiv_relu` — guarded subgradient axiom (DL convention).
+- `relu_has_vjp` — existence at non-smooth points.
 - `mlp_has_vjp` — composes through ReLU.
+- `softmaxCE_grad` — gradient of cross-entropy loss. Provable via chain rule on `-log ∘ softmax_label` if `pdiv_softmax` is available.
 
-**CNN (2):**
-- `conv2d_has_vjp3` — input-path VJP through non-smooth boundary handling.
+**CNN-family (3):**
+- `conv2d_has_vjp3` — input-path VJP through padding boundary.
 - `maxPool2_has_vjp3` — argmax routing convention.
-
-**Depthwise (1):**
 - `depthwise_has_vjp3` — input-path VJP, parallel to conv2d.
 
-**BatchNorm (2):**
-- `pdiv_bnIstdBroadcast` — derivative of `1/√(σ²+ε)`.
-- `bnIstdBroadcast_diff` — smoothness of same function (added by Stage 2d).
+**Closed-form derivative formulas (2):**
+- `pdiv_softmax` — `∂(exp(z j) / Σ exp(z k))/∂z i`. Quotient-rule formula.
+- `pdiv_bnIstdBroadcast` — `∂(1/√(σ²+ε))/∂x_i = -istd³ · (xᵢ - μ) / n`.
 
-**LayerNorm (1):**
-- `pdiv_gelu` — diagonal Jacobian of GELU.
-
-**Attention (12):**
-- `pdiv_softmax` — Jacobian of softmax.
-- `mhsa_has_vjp_mat` — multi-head SDPA.
+**Attention bundles (4):**
+- `mhsa_has_vjp_mat` — multi-head SDPA bundled.
+- `mhsa_layer_flat_diff` — Diff sibling.
 - `patchEmbed_flat_has_vjp` — opaque-codegen patch embedding.
-- `rowSoftmax_flat_diff` — smoothness via Real.exp.
-- `transformerMlp_has_vjp_mat` — deferred composition.
-- `transformerAttnSublayer_has_vjp_mat` — deferred composition.
-- `transformerMlpSublayer_has_vjp_mat` — deferred composition.
-- `transformerBlock_has_vjp_mat` — deferred composition.
-- `transformerTower_has_vjp_mat` — deferred (was an induction).
-- `vit_body_has_vjp_mat` — deferred composition.
-- `classifier_flat_has_vjp` — deferred (linear, easy to thread).
-- `vit_full_has_vjp` — deferred composition.
+- `patchEmbed_flat_diff` — Diff sibling.
 
 ---
 
-## Mechanical follow-ups (the realistic next session)
+## What's still tackleable (and what isn't)
 
-These get the count back to ~13 with no architectural decisions left.
+### Tackleable but multi-hour (the realistic next session)
 
-### A. Thread Diff through the 7 deferred Attention chains
+**`pdiv_softmax`** — closed-form derivative.
 
-Pattern is established by `sdpa_Q_chain_has_vjp` and
-`sdpa_K_chain_has_vjp`. Each `vjpMat_comp` / `biPathMat_has_vjp` /
-`vjp_comp` call needs `Differentiable` evidence for both factors,
-discharged by:
-- The four `*_flat_diff` helpers at the top of `Attention.lean`
-  (already in place: matmul-left/right, scalar-scale, transpose).
-- `rowSoftmax_flat_diff` (axiom — that one stays).
-- For composed chains: `Differentiable.comp` after a `simp [Mat.unflatten_flatten]`
-  rewrite that pushes the flatten/unflatten through `∘`.
+The mathematically-clean approach is the 1D directional-derivative reduction:
+1. `fderiv f z (basisVec i) j = fderiv (fun z' => softmax c z' j) z (basisVec i)` via `fderiv_apply`.
+2. Match with `HasDerivAt (fun t => softmax c (z + t • basisVec i) j) (rhs) 0` via `HasFDerivAt.comp_hasDerivAt_of_eq` + `HasDerivAt.unique`.
+3. The 1D function unfolds to `Real.exp (z j + t · δ_j) / Σ_k Real.exp (z k + t · δ_k)` where `δ_k = if k = i then 1 else 0`.
+4. Apply Mathlib's 1D `HasDerivAt.div` (well-supported), `HasDerivAt.fun_sum`, `Real.hasDerivAt_exp`.
+5. `Σ_k Real.exp (z k) · δ_k` collapses to `Real.exp (z i)` via `Finset.sum_ite_eq`.
+6. Algebra to match `softmax z j · ((if i = j then 1 else 0) - softmax z i)`.
 
-Order to thread (innermost to outermost — each compose builds on the previous):
-1. `transformerMlp_has_vjp_mat` (3 levels of `vjpMat_comp`).
-2. `transformerAttnSublayer_has_vjp_mat` (`biPathMat` of identity and
-   `mhsa ∘ LN1`).
-3. `transformerMlpSublayer_has_vjp_mat` (parallel to attn sublayer).
-4. `transformerBlock_has_vjp_mat` (one `vjpMat_comp`).
-5. `transformerTower_has_vjp_mat` (induction on k via `vjpMat_comp`).
-6. `vit_body_has_vjp_mat` (one `vjpMat_comp`).
-7. `classifier_flat_has_vjp` (`vjp_comp` of two linear functions; trivial).
-8. `vit_full_has_vjp` (three-level `vjp_comp` over patchEmbed, body, classifier).
+Attempted on this branch (uncommitted, reverted). Tripping points:
+- `congr 1` over-reduces in the function-equality step (massaging `fun t => softmax c (z + t • v) j` into the explicit quotient form).
+- `Finset.sum_ite_eq` vs `'` direction for collapsing `Σ_k (if k = i then ... else 0)`.
+- `show`-statement type unification at the `t = 0` substitution points (`0 * δ k` not auto-reducing inside the goal that survives `convert h_div using 1`).
 
-Each `Differentiable` proof wants `(hε : 0 < ε)` plumbed through —
-the per-token wrappers (`layerNorm_per_token_has_vjp_mat`) already
-take it. **Net axiom delta: −7.**
+Each fixable individually; combined proof likely **~80 lines, 2-3 focused hours**.
 
-Estimate: 4-6 hours, mechanical. Each axiom unrolls into roughly the
-proof body that was already there before, plus the Diff hypotheses.
+**`softmaxCE_grad`** — chain rule on `-log ∘ softmax_label`. Provable via `pdiv_comp` on the composition + `Real.deriv_log` at `softmax label > 0` + `pdiv_softmax`. **Estimated 1-2 hours**, conditional on `pdiv_softmax` (theorem) — or it can stay axiom-conditional on the still-axiomatic `pdiv_softmax`.
 
-### B. Prove `rowSoftmax_flat_diff` from Mathlib calculus
+**`pdiv_bnIstdBroadcast`** — `1/√(σ²+ε)` derivative. Chain through `Real.sqrt`, `Inv.inv`, and `bnVar`'s product-rule derivative `(2/n) · (xᵢ - μ)`. **Estimated 3-4 hours**. Same shape as `pdiv_softmax` (1D directional approach is right) but deeper algebra in the inner `bnVar` step.
 
-`Real.exp` is C^∞ everywhere; the denominator `∑ⱼ exp(M r j)` is
-positive everywhere; division by a positive function is smooth.
-Mathlib has `Real.differentiable_exp`, `Differentiable.fun_sum`, and
-`DifferentiableAt.div` with positivity hypotheses. The proof is:
-```lean
-unfold rowSoftmax softmax
-intro v
--- Each entry: exp(M r c) / Σⱼ exp(M r j). Differentiable.div with
--- denom positivity (from Real.exp_pos) + Differentiable.exp.
-fun_prop (disch := positivity)
-```
-**Net axiom delta: −1.** Estimate: 1-2 hours.
+**Realistic floor after follow-up E:** 13 → 10 axioms.
 
-### C. Prove `bnIstdBroadcast_diff` from Mathlib calculus
+### Stays axiomatic (10 of the current 13)
 
-`1/√(bnVar n x + ε)` with `ε > 0`:
-- `bnVar n x + ε ≥ ε > 0` by sum-of-squares + positive ε.
-- `Real.sqrt` differentiable at positive argument.
-- `Inv.inv` (or `1/x`) differentiable at non-zero argument.
-- Compose. Mathlib lemmas: `Real.sqrt`'s `hasDerivAt` family +
-  `DifferentiableAt.inv`.
+- **Subgradient conventions (3):** `pdiv_relu`, `relu_has_vjp`, `mlp_has_vjp`. Could be derived only by weakening `HasVJP.correct` to a "smooth subset only" formulation — project-wide rewrite, separate multi-week effort.
+- **Non-smooth/boundary conventions (3):** `conv2d_has_vjp3`, `maxPool2_has_vjp3`, `depthwise_has_vjp3`. Same weakening would unlock these, modulo a shared boundary-handling axiom.
+- **Bundled vmap-VJP (2):** `mhsa_has_vjp_mat`, `mhsa_layer_flat_diff`. Need a column-axis analog of `pdivMat_rowIndep` plus a ternary-input VJP framework lemma.
+- **Opaque-codegen interfaces (2):** `patchEmbed_flat_has_vjp`, `patchEmbed_flat_diff`. The actual computation lives in MLIR; we axiomatize the forward+backward consistency.
 
-**Net axiom delta: −1.** Estimate: 1-2 hours.
-
-### D. Prove `pdivMat_rowIndep` via `fderiv_pi`
-
-VJP.md flagged this earlier as "provable via `fderiv_pi` but
-non-trivial — defer." The argument: `fderiv_pi` says the fderiv of a
-Pi-valued function decomposes coordinate-wise. For row-independent
-functions (each row's output depends only on the corresponding input
-row), the decomposition gives the block-diagonal Jacobian directly.
-
-**Net axiom delta: −1.** Estimate: half a day.
-
-### E. (Optional) Prove `pdiv_gelu` and `softmaxCE_grad`
-
-`pdiv_gelu`: gelu is C^∞ (uses `Real.erf` or smooth tanh approximation
-depending on the def). `fderiv_pi` decomposes to per-coordinate
-scalars; per-coord derivative is `geluScalarDeriv`.
-
-`softmaxCE_grad`: standard log-sum-exp identity unwinding. Uses
-`Real.log_div` and `Real.exp` calculus.
-
-**Net axiom delta: −2.** Estimate: 2-3 hours each.
-
-**After A+B+C+D**: 23 → 13 axioms.
-**After A+B+C+D+E**: 23 → 11 axioms.
-
----
-
-## Hard residuals (likely staying axiomatic)
-
-These 8-10 axioms will likely stay regardless of follow-up effort:
-
-- `pdiv_relu` — DL community subgradient convention. Not a theorem of standard analysis.
-- `relu_has_vjp` — same reason. Could be derived if `HasVJP.correct` is weakened to "smooth subset only" (project-wide rewrite, not in scope).
-- `mhsa_has_vjp_mat` — multi-head attention is structurally a vmap over the head axis; needs a vmap-VJP framework lemma not in scope.
-- `patchEmbed_flat_has_vjp` — opaque-codegen interface. The actual computation lives in MLIR; axiomatized that the forward+backward pair is consistent.
-- `conv2d_has_vjp3`, `maxPool2_has_vjp3`, `depthwise_has_vjp3` — input-path VJPs through padding boundary / argmax non-smoothness. Like ReLU, these are subgradient conventions.
-
-Below the floor (~10 axioms) the remaining are all of the form "the ML
-framework treats this op's gradient by convention X" and aren't
-provable from standard analysis without weakening `HasVJP.correct`.
+Below ~10 axioms, every remaining axiom is "the ML framework treats this op's gradient by convention X" or "this opaque codegen forward and backward are mutually consistent" — neither is provable from standard analysis without weakening the framework.
 
 ---
 
 ## Soundness analysis (carry-forward, still load-bearing)
 
-Two soundness wells from prior attempts. Both are now resolved by the
-guarded-ReLU strategy + conditional bilinear rules, but anyone who
-considers a future restructure should re-read these.
+Three soundness wells now resolved. Anyone considering a future restructure should re-read these.
 
-### 1. `pdiv_relu` (unguarded) is incompatible with `fderiv`-based pdiv
+### 1. `pdiv_relu` (unguarded) is incompatible with `fderiv`-based `pdiv`
 
 For `n ≥ 2`, take `x = (1, 0) : Vec 2`. The function `relu 2` is **not**
 `Differentiable` at `x` — coordinate `y₁ ↦ if y₁ > 0 then y₁ else 0` is
@@ -217,7 +124,7 @@ function is differentiable iff each coordinate is. So
 `fderiv ℝ (relu 2) (1, 0) = 0` (Mathlib junk default), making
 `pdiv (relu 2) (1, 0) 0 0 = 0`. The unguarded axiom asserts `1`. **0 ≠ 1.**
 
-The guarded form (`∀ k, x k ≠ 0`) excludes this counterexample. ✅
+Resolution: `pdiv_relu` is guarded by `(∀ k, x k ≠ 0)`. ✅
 
 ### 2. Unconditional `pdiv_add` / `_mul` / `_comp` are incompatible with `fderiv`
 
@@ -228,88 +135,141 @@ Counterexample for `pdiv_add`: take `f y = fun _ => abs (y 0)` (not
 - `pdiv f x 0 0` is junk = 0; `pdiv g x 0 0 = 1`. RHS = `0 + 1 = 1`.
 - Unconditional axiom claims LHS = RHS, i.e., `0 = 1`. ✗
 
-The conditional form (with `DifferentiableAt f x` ∧ `DifferentiableAt g x`)
-excludes this counterexample. ✅
+Resolution: bilinear rules require `DifferentiableAt` hypotheses. ✅
+
+### 3. **Unconditional `pdivMat_rowIndep` was technically unsound** (resolved this branch, commit `f8ac5b1`)
+
+Counterexample with `relu : Vec 1 → Vec 1`, `m = 2`, `n = 1`, `p = 1`, take
+`A 0 = (0,)` (kink), `A 1 = (1,)`. The flattened row-wise function
+`F(v)` is non-differentiable at `flat A` because the 0-coord
+(`relu` applied to row 0) is non-differentiable at `relu(0)`.
+Therefore `fderiv F (flat A) = 0` (junk), so the LHS
+`pdivMat (rowwise relu) A 1 0 1 0 = 0`.
+
+But the RHS — under the unconditional axiom — is
+`pdiv relu (A 1) 0 0 = 1` (since `relu` IS differentiable at `(1,)`,
+derivative `1`). So **the unconditional axiom asserts `0 = 1`**.
+
+Resolution: `pdivMat_rowIndep` now requires `Differentiable ℝ g`. With
+the hypothesis, the Pi-decomposition `F` IS differentiable at every
+flat A, and `fderiv_apply` + chain rule with row-projection CLM gives
+the correct decomposition. ✅
+
+The unsoundness was harmless in practice because every use of
+`rowwise_has_vjp_mat` in the project was with a differentiable function
+(softmax, dense, gelu, layerNorm). But the axiom's blanket form was a
+landmine for any future caller. The cascade in `f8ac5b1` made the
+hypothesis explicit at every call site.
 
 ---
 
-## Pitfalls (encountered during the migration)
+## Pitfalls (encountered during the migration + branch)
 
 1. **Lambda-form vs CLM-coercion in `rw`.** Passing
    `(reindexCLM σ).differentiableAt` directly to a `pdiv_*` theorem
    inside a rewrite generates a pattern with the `⇑(reindexCLM σ)`
    coercion that doesn't unify with goals containing the lambda form.
-   **Fix:** name the diff hypothesis with an explicit lambda type:
-   ```lean
-   have h_reindex_diff : DifferentiableAt ℝ (fun w idx => w (σ idx)) x :=
-     (reindexCLM σ).differentiableAt
-   rw [pdiv_mul _ _ _ h_const_diff h_reindex_diff]
-   ```
+   **Fix:** name the diff hypothesis with an explicit lambda type.
 
 2. **`fun_prop` on division by `Nat`-coerced denominators.** `fun_prop`
    doesn't currently know `HDiv.hDiv` is `Differentiable` in general
    (would need a non-zero denominator hypothesis). Workaround: rewrite
-   `x / (↑n : ℝ)` as `x * (↑n)⁻¹` before `fun_prop`. (Hit in `bnCentered`'s
-   Diff proof during BN migration.)
+   `x / (↑n : ℝ)` as `x * (↑n)⁻¹` before `fun_prop`.
 
-3. **`fun_prop` on `Real.sqrt` / `Real.exp` chains.** Doesn't auto-handle
-   the positivity-conditional smoothness of `1/√(...)` or
-   `exp(...) / Σ exp(...)`. Use manual `DifferentiableAt.inv` +
-   `Real.sqrt` lemmas with positivity, or axiomatize the Diff lemma
-   for now.
+3. **`fun_prop` on `Real.sqrt` / `Real.exp` chains for `Vec → ℝ` codomain.**
+   Doesn't auto-handle the positivity-conditional smoothness of
+   `1/√(...)` or `exp(...) / Σ exp(...)`. Use manual `Differentiable.inv`
+   / `Differentiable.sqrt` lemmas with explicit `≠ 0` hypotheses, or
+   rewrite `c x / d x` as `c x * (d x)⁻¹` and chain.
+   `Mathlib.Analysis.Calculus.Deriv.Inv`'s `Differentiable.fun_div` only
+   works for `𝕜 → 𝕜'` (scalar domain), NOT for general `Vec → ℝ`.
 
-4. **Big surgery via `sed` on Lean files is risky.** When deleting
+4. **`Real.tanh` not `@[fun_prop]`-tagged in current Mathlib snapshot.**
+   Project bridges via `theorem Real.differentiable_tanh` (LayerNorm.lean,
+   commit `5532d15` / `6f65ba3`) derived from
+   `Real.tanh_eq_sinh_div_cosh` + `Real.differentiable_sinh` /
+   `Real.differentiable_cosh` + `Real.cosh_pos`, then tagged
+   `@[fun_prop]` so downstream `geluScalar`/`gelu_diff` auto-discharge.
+
+5. **Dot notation on `DifferentiableAt`/`Differentiable` mishandles
+   field names that exist in multiple namespaces.** Workarounds:
+   `Differentiable.fun_div` requires the `𝕜` to be a `NontriviallyNormedField`,
+   and Lean's dot resolution sometimes binds `𝕜 := domain` instead of
+   the codomain field. Use the function-call form `Differentiable.fun_div h₁ h₂ h₃`
+   with explicit args, or `(h_num v).fun_div (h_denom v) (h_ne v)` for
+   the `DifferentiableAt`-level call.
+
+6. **`HasFDerivAt.comp_hasDerivAt` substitution at `f x` not auto-reducing.**
+   When composing `HasFDerivAt l l' z` with `HasDerivAt (fun t => z + t • v) v 0`,
+   Lean expects `l` to be `HasFDerivAt` at `f 0 = z + 0 • v`, which
+   doesn't reduce to `z` definitionally without prompting. Use
+   `HasFDerivAt.comp_hasDerivAt_of_eq h_l h_f (by simp)` to inject the
+   reduction.
+
+7. **Big surgery via `sed` on Lean files is risky.** When deleting
    parallel-track blocks, find the correct opening and closing line
-   boundaries (look at section headers, not line counts) — `sed` doesn't
-   know about Lean's nesting. (Hit when deleting `pdivFDMat` block.)
+   boundaries (look at section headers, not line counts).
 
-5. **Doc-comment + axiom interaction.** `axiom foo` after `/-- ... -/`
-   is fine, but back-to-back `/-- ... -//-- ... -/` (e.g. after
-   converting a theorem with its own doc-comment to an axiom and
-   adding a new doc-comment) gives "unexpected token '/--'" — Lean
-   wants exactly one doc-comment per declaration.
+8. **Doc-comment + axiom interaction.** Back-to-back `/-- ... --//-- ... -/`
+   gives "unexpected token '/--'" — Lean wants exactly one doc-comment
+   per declaration.
 
 ---
 
-## Discipline notes (what the staged plan got right)
+## Discipline notes (what the staged plan got right, branch-flavor)
 
-- **Tree-green at every commit.** Stages 1, 2a-2e all landed with
-  `lake build` passing. The two earlier flip attempts violated this
-  and got tangled; staged commits are the way.
-- **`#print axioms` after each stage.** Confirmed pure-Mathlib
-  closure on key theorems at every chapter migration. This is the
-  real success metric, not the raw `^axiom` count.
-- **Don't optimize for axiom count alone.** Two cosmetic
-  trivial-form commits (`9c03889`, `f94bc03`) were tried and
-  reverted as noise — they removed the literal `axiom` declaration
-  but added no proof content. The recipe is in
-  `feedback_axiom_count_metric.md` (memory).
+- **Tree-green at every commit.** All four commits on this branch landed
+  with `lake build` passing. Each commit is a self-contained chunk
+  (chain threading, then Diff bridge promotions, then `pdivMat_rowIndep`
+  + cascade, then `pdiv_gelu`).
+- **`#print axioms` after each stage.** Every promoted theorem (the 8
+  chains, the 5 Diff bridges, `pdivMat_rowIndep`, `pdiv_gelu`) was
+  audited against pure-Mathlib closure (`propext / Classical.choice /
+  Quot.sound`) before commit. Catches accidental dependencies that
+  raw `^axiom` greps miss.
+- **Don't optimize for axiom count alone.** The previous branch's
+  cosmetic trivial-form commits (`9c03889`, `f94bc03`) were tried and
+  reverted as noise. This branch's commits all add genuine proof
+  content. The 4 Diff bridges added in `581a771` (and 2 of them
+  promoted to theorems by `5532d15` + `f8ac5b1`) are honest book-keeping
+  — the chains they enable being theorems is the substance.
+- **Time-box ambitious proofs.** `pdiv_softmax` was attempted on this
+  branch via the 1D directional-derivative approach. Math was right;
+  Lean elaboration tripped on three things (see Pitfalls #5 + #6 + the
+  `congr` over-reduction). Reverted rather than committing a half-done
+  proof. The right next step is a focused 2-3 hour session with the
+  attempted skeleton as the starting point — not interleaved with
+  other work.
 
 ---
 
-## Time estimate for follow-up
+## Time estimate for remaining follow-up
 
-- **A (Attention threading):** 4-6 hours. Mechanical, pattern established.
-- **B (rowSoftmax Diff):** 1-2 hours.
-- **C (bnIstdBroadcast Diff):** 1-2 hours.
-- **D (pdivMat_rowIndep):** half a day.
-- **E (pdiv_gelu, softmaxCE_grad):** 2-3 hours each (optional).
+- **`pdiv_softmax`:** 2-3 hours. Skeleton drafted; pitfalls cataloged.
+- **`softmaxCE_grad`:** 1-2 hours, conditional on `pdiv_softmax`
+  (theorem) — chain rule on `-log ∘ softmax_label`.
+- **`pdiv_bnIstdBroadcast`:** 3-4 hours. Same 1D approach as
+  `pdiv_softmax`, plus `bnVar` derivative algebra.
 
-**Total to reach the floor:** one focused session of ~8-12 hours.
+**Total to reach the floor:** ~one focused session of 6-9 hours.
 
 ---
 
-## After the floor
+## After the floor (10 axioms)
 
-13 axioms (or 11 with stage E). Of those:
-- 1 is foundation-related (`pdivMat_rowIndep` if D is skipped, or 0 if landed).
-- ~3-4 are subgradient conventions (`pdiv_relu`, `relu_has_vjp`, possibly `mlp_has_vjp` and the analogous CNN/Depthwise/MaxPool).
-- ~3 are opaque-codegen interfaces (`patchEmbed_flat_has_vjp`, possibly `mhsa_has_vjp_mat`).
-- ~3 are derivative formulas that could be Mathlib-derived with effort (`pdiv_gelu`, `pdiv_softmax`, `softmaxCE_grad`).
+10 axioms, broken down:
+- 3 ReLU subgradient conventions (`pdiv_relu`, `relu_has_vjp`, `mlp_has_vjp`).
+- 3 non-smooth/boundary conventions (`conv2d_has_vjp3`, `maxPool2_has_vjp3`, `depthwise_has_vjp3`).
+- 2 vmap-VJP framework bundles (`mhsa_has_vjp_mat`, `mhsa_layer_flat_diff`).
+- 2 opaque-codegen interfaces (`patchEmbed_flat_has_vjp`, `patchEmbed_flat_diff`).
 
-Below 11 starts requiring framework-level changes: weakening
-`HasVJP.correct` to a "smooth subset" formulation so the subgradient
-axioms can be deduced from `pdiv_relu`-like base axioms, and adding a
-vmap-VJP framework lemma to derive `mhsa_has_vjp_mat` from the
-single-head SDPA proof. Those are project-wide rewrites — separate
-multi-week efforts, not this one's continuation.
+Below 10 starts requiring framework-level changes:
+- **Weakening `HasVJP.correct`** to a "smooth subset" formulation so the
+  ReLU/conv/depthwise/maxpool subgradient axioms can be deduced from
+  smaller base axioms.
+- **A column-axis `pdivMat_rowIndep` analog** plus a ternary-input VJP
+  framework so `mhsa_has_vjp_mat` follows from the single-head SDPA
+  proof (`sdpa_back_{Q,K,V}_correct`, already proved as theorems on `main`).
+
+Both are project-wide rewrites — separate multi-week efforts, not
+this branch's continuation.
