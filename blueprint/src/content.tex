@@ -889,7 +889,7 @@ The workhorse: \(y = Wx + b\) plus ReLU and softmax cross-entropy loss.
   \leanok
   \uses{thm:dense_has_vjp, thm:relu_has_vjp}
   Axiomatized: the chain composes through ReLU which is non-differentiable
-  at the kink, so \(\vjp{\circ}\) (which now requires \(\Differentiable\)
+  at the kink, so \texttt{vjp\_comp} (which now requires \(\Differentiable\)
   evidence) cannot mechanically compose this. Subgradient routing is the
   source of axiomaticness.
 \end{axiom}
@@ -1544,7 +1544,7 @@ plain \texttt{.conv2d} used here keeps the StableHLO much tighter.
   \leanok
   \(\bnIstdBroadcast\) is \(\Differentiable\) when \(\varepsilon > 0\).
   Captures the sqrt/recip smoothness of \(1/\sqrt{\sigma^2 + \varepsilon}\)
-  required by \(\pdiv\_\!\!\mathrm{mul}\) inside \texttt{pdiv\_bnNormalize}.
+  required by \texttt{pdiv\_mul} inside \texttt{pdiv\_bnNormalize}.
   Same morally-provable cluster as \texttt{pdiv\_bnIstdBroadcast}.
 \end{axiom}
 
@@ -2488,7 +2488,7 @@ Chapter~\ref{chap:attention} uses both to define ViT.
   Smoothness of \(\mathrm{rowSoftmax}\) (the flattened form): the
   denominator \(\sum_j \exp(M_{rj})\) is positive, so the function is
   C\(^\infty\) via Mathlib's \(\mathrm{Real.exp}\) calculus. Formal
-  derivation deferred — axiomatized so \(\vjpMat\_\!\!\mathrm{comp}\)
+  derivation deferred — axiomatized so \texttt{vjpMat\_comp}
   can compose through it.
 \end{axiom}
 
