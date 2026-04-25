@@ -222,17 +222,26 @@ These tripped the attempt and will trip the next one. Pre-mitigate.
 
 To minimize the rework risk:
 
-1. **Phase 1 (standalone, ~265 LOC) — ✅ LANDED.** `pdivMat_colIndep` +
+1. **Phase 1 (~265 LOC) — ✅ LANDED.** `pdivMat_colIndep` +
    `colSlabApply` + `colSlabwise_has_vjp_mat` on branch
    `colslab-vmap-framework` (commit `6259cae`). Pure-Mathlib closure on
    all three. Doesn't change axiom counts; reusable foundation for
    Phase 3.
-2. **Phase 2 (~150 LOC):** `HasVJPMat3` framework + `sdpa_has_vjp_mat3`.
-   Standalone too: doesn't depend on Phase 1 directly (Phase 1 is the
-   "vmap" half, Phase 2 is the "ternary" half).
-3. **Phase 3 (~200 LOC):** combine Phases 1 + 2 into `mhsa_has_vjp_mat`
-   and `mhsa_layer_flat_diff`. This is where the integration risk lives;
-   the prior two phases having clean APIs makes this manageable.
+2. **Phase 2 (~48 LOC) — ✅ LANDED.** `HasVJPMat3` struct +
+   `sdpa_has_vjp_mat3` (bundle of existing `sdpa_back_{Q,K,V}_correct`
+   theorems) on the same branch (commit `bccf241`). Pure-Mathlib closure.
+   Doesn't change axiom counts; this is the ternary half of the
+   framework. **Note**: the original plan included a
+   `colSlabwise_has_vjp_mat3` ternary lift (~150 LOC), but in practice
+   it's not strictly needed — Phase 3 can use Phase 1's `pdivMat_colIndep`
+   directly with custom per-input chain rule expansions, avoiding the
+   need for a ternary lift abstraction.
+3. **Phase 3 (~400-500 LOC) — DEFERRED.** Combine Phases 1 + 2 into
+   `mhsa_has_vjp_mat` and `mhsa_layer_flat_diff`. The blocker:
+   joint differentiability of `sdpa` in `(Q, K, V)` doesn't follow from
+   the existing one-variable-at-a-time `*_flat_diff` lemmas. Needs a
+   new `sdpa_diff_jointly` helper (~150 LOC) plus the integration
+   chain (~200-350 LOC). See "Phase 3 attempt notes" below.
 4. **VJP.md update + commits**, mirroring the
    `attention-diff-threading` discipline (one commit per landed piece).
 
@@ -240,19 +249,52 @@ After Phase 3, axiom count drops 10 → 8. The remaining 8 are pure
 "framework convention" axioms (ReLU subgradient cluster + opaque
 codegen).
 
+### Phase 3 attempt notes (the blocker)
+
+Tried two approaches in a follow-up session:
+
+**Attempt A: ternary `colSlabwise_has_vjp_mat3`.** Build a HasVJPMat3
+analog of Phase 1's `colSlabwise_has_vjp_mat`. Hit immediate trouble:
+the function `fun A' => colSlabApply3 g A' B C` (with B, C fixed) is
+NOT of the form `colSlabApply g_unary` for any uniform per-slab `g_unary`,
+because the per-slab function depends on h via the (slab h B, slab h C)
+context. Would need a more general `pdivMat_colIndep_general` allowing
+the per-slab function to vary with h. Doable but adds ~80 LOC of
+generalization for one specific use.
+
+**Attempt B: `mhsa_layer_flat_diff` standalone.** Tried to prove just
+the differentiability sibling (~80 LOC estimated). Hit the joint
+differentiability blocker: SDPA's flat form is
+`(qkv) ↦ matmul(rowSoftmax(scalarScale(matmul(Q, K^T))), V)`, with
+`Q, K, V` all functions of `qkv`. Existing `matmul_left_const_flat_diff`
+/ `matmul_right_const_flat_diff` / `rowSoftmax_flat_diff` /
+`scalarScale_flat_diff` only treat one matrix as the variable; for
+joint diff we'd either:
+- Tag `rowSoftmax_flat_diff` with `@[fun_prop]` and hope `fun_prop`
+  chains through after `unfold sdpa Mat.mul Mat.transpose` — but the
+  inner softmax denominator's positivity isn't auto-discharged.
+- Build a `sdpa_diff_jointly` helper from scratch using
+  `Differentiable.comp`, `Differentiable.prodMk`, and `IsBoundedBilinearMap`
+  for matrix multiplication. Real cost ~150 LOC.
+
+**Conclusion:** Phase 3 needs the `sdpa_diff_jointly` helper as a
+prerequisite. That helper plus the integration chain is ~400-500 LOC,
+genuine framework work, not a quick win.
+
 ---
 
 ## Time budget
 
-- ~~Phase 1: 4–6 hours~~ — actual: ~1 hour (much faster than estimated
-  once the pitfalls catalog was applied. The original failure was
-  tactic-ordering noise, not a fundamental difficulty).
-- Phase 2: 4–6 hours (`HasVJPMat3` is straightforward but verbose; the
-  chain rule for ternary inputs needs care).
-- Phase 3: 6–8 hours (integration, joint diff plumbing, mhsa_layer
-  composition).
+- ~~Phase 1: 4–6 hours~~ — actual: ~1 hour.
+- ~~Phase 2: 4–6 hours~~ — actual: ~30 minutes (the structure +
+  bundling, not the full ternary `colSlabwise` lift).
+- Phase 3: 6–10 hours (the `sdpa_diff_jointly` helper is the real
+  surprise — it requires either tagging Mathlib lemmas, building
+  `IsBoundedBilinearMap` instances for matrix multiplication, or a
+  manual chain through each sdpa step. Plus the integration chain
+  itself).
 
-**Remaining: ~10–14 focused hours, ~2 working days.**
+**Remaining: ~6–10 focused hours, ~1–1.5 working days.**
 
 ---
 
