@@ -315,14 +315,16 @@ backward function with its correctness claim.
   Covers permutations, reshapes, slicing. Generalizes \texttt{pdiv\_id}.
 \end{theorem}
 
-\begin{axiom}[Row-independence for matrices]
+\begin{theorem}[Row-independence for matrices]
   \label{ax:pdivMat_rowIndep}
   \lean{Proofs.pdivMat_rowIndep}
   \leanok
   \uses{ax:pdiv}
   Applying a vector function per-row to a matrix has block-diagonal Jacobian.
-  The one genuinely-new primitive at the \(\mathsf{Mat}\) level.
-\end{axiom}
+  Proved from \(\fderiv\) via the row-projection \(\mathrm{ContinuousLinearMap}\)
+  and the chain rule, given a \(\Differentiable\) hypothesis on the
+  per-row function.
+\end{theorem}
 
 \begin{theorem}[Finite-sum rule]
   \label{thm:pdiv_finset_sum}
@@ -616,40 +618,40 @@ If you're planning how much of the book to read, here's the
 per-chapter cost in both directions: new axioms (unproved
 starting facts we take as given) and new theorems (proven
 compositions Lean's typechecker verified). The totals across
-Chapters 2--10 are \textbf{20 axioms and 52 theorems}, with zero
-\texttt{sorry}s. (Earlier drafts shipped 30 axioms; the
-foundation flip described above shed 10 of them by promoting the
-calculus rules from axioms to theorems and replacing several
-opaque forwards with concrete definitions.)
+Chapters 2--10 are \textbf{81 numbered items (10 axioms +
+65 theorems + 6 definitions)}, with zero \texttt{sorry}s.
+(Earlier drafts shipped 30 axioms; the foundation flip described
+above plus the follow-up diff-threading work shed 20 of them by
+promoting calculus and chapter-specific Jacobians from axioms to
+theorems and replacing several opaque forwards with concrete
+definitions.)
 
 \textbf{This chapter (Ch 2)} does the structural heavy lifting:
-1 axiom (\(\pdivMat\) row independence --- the matrix-level
-analogue that doesn't fall out of the scalar foundation) and 26
-theorems that compose Mathlib's \(\fderiv\) into the VJP toolkit
-every later chapter will reuse: the chain rule, additive and
-multiplicative fan-in, identity, reindexing, and the matrix-/
+zero axioms and 27 theorems that compose Mathlib's \(\fderiv\)
+into the VJP toolkit every later chapter will reuse --- the
+chain rule, additive and multiplicative fan-in, identity,
+reindexing, row-independence for matrices, and the matrix-/
 3-tensor-level lifts. Plus \(\pdiv\) itself as a definition over
 \(\fderiv\).
 
-\textbf{Chapter 3 (MLP)} adds 4 axioms (the guarded ReLU
-subgradient, softmax cross-entropy gradient, plus two
-composition shortcuts --- \(\texttt{relu\_has\_vjp}\) and
-\(\texttt{mlp\_has\_vjp}\) --- that bundle Stage 2 work whose
-symbolic proof is mechanical but deferred) and 5 theorems
-stitching them together. Dense Jacobians in both arguments are
-now proved from the foundation rather than axiomatized.
+\textbf{Chapter 3 (MLP)} adds 3 axioms (the guarded ReLU
+subgradient plus two composition shortcuts ---
+\(\texttt{relu\_has\_vjp}\) and \(\texttt{mlp\_has\_vjp}\) ---
+that bundle existence at non-smooth points) and 6 theorems.
+Dense Jacobians and the softmax cross-entropy gradient are now
+proved from the foundation rather than axiomatized.
 
 \textbf{Chapter 4 (CNN)} adds 2 axioms (\(\texttt{conv2d}\) and
 \(\texttt{maxPool2}\) input VJPs) and 2 theorems plus 2
 definitions. \(\texttt{conv2d}\) and \(\texttt{maxPool2}\) are
 now concrete defs; their weight- and bias-gradient lemmas are
 proved from the foundation; only the input-side VJP remains
-opaque.
+opaque (padding boundary / argmax routing).
 
-\textbf{Chapter 5 (BN)} adds 2 axioms (BN inverse-stddev
-broadcast Jacobian and its smoothness lemma under
-\(\varepsilon > 0\)) and 5 theorems. BN affine and centering
-Jacobians are now proved.
+\textbf{Chapter 5 (BN)} adds zero axioms and 7 theorems. The
+inverse-stddev broadcast Jacobian and its smoothness lemma
+under \(\varepsilon > 0\) are now proved from foundation, as are
+the BN affine and centering Jacobians.
 
 \textbf{Chapter 6 (Residual)} adds zero new axioms and just 1
 theorem (the residual additive-fan-in VJP, built entirely from
@@ -666,48 +668,62 @@ from foundation, only the input-side VJP is left opaque.
 global-avg-pool plus two 1\(\times\)1 convs plus the elementwise
 product; every piece was already proved elsewhere.
 
-\textbf{Chapter 9 (LN + GELU)} adds 1 axiom (GELU Jacobian) and
-2 theorems plus 2 definitions. \(\texttt{geluScalar}\) and its
-derivative are now concrete defs; LayerNorm reuses the BN proof
-template.
+\textbf{Chapter 9 (LN + GELU)} adds zero axioms and 3 theorems
+plus 2 definitions. The GELU Jacobian is proved via
+\(\fderiv\) and \texttt{Real.differentiable\_tanh};
+\(\texttt{geluScalar}\) and its derivative are concrete defs;
+LayerNorm reuses the BN proof template.
 
-\textbf{Chapter 10 (Attention)} adds 9 axioms and 8 theorems.
-Two of the axioms are bottom-level (softmax Jacobian, multi-head
-SDPA VJP); the other seven are composition shortcuts where the
-full symbolic proof is queued behind the foundation flip. The
-theorems still call the matrix-composition kit (chain rule,
-fan-in, transpose, rowwise softmax, left/right-constant matmul,
-scalar scaling) that Chapter~2 set up; the transformer block
-factors through every one of them.
+\textbf{Chapter 10 (Attention)} adds 4 axioms and 16 theorems.
+Two of the axioms are bundled multi-head SDPA --- the VJP
+itself and its \(\Differentiable\) sibling --- where deriving
+from \(\mathrm{matmul}\) and \(\mathrm{rowSoftmax}\) would
+require per-head reduction machinery beyond the chapter's
+scope. The other two cover the ViT patch-embedding interface
+(VJP + Diff sibling), an opaque-codegen boundary. Softmax
+Jacobian, row-wise softmax smoothness, and seven
+transformer-level chains (sublayers, block, tower, ViT body)
+are all now proved. The theorems call the matrix-composition
+kit Chapter~2 set up; the transformer block factors through
+every one of them.
 
 \begin{center}
-\begin{tabular}{l c c l}
+\begin{tabular}{l c c r l}
 \hline
-Chapter & New (ax + th) & Cumulative (ax + th) & Architectures unlocked \\
+Chapter & New (ax + th + def) & Cumulative & Last \# & Architectures unlocked \\
 \hline
-2 (You Are Here)       & 1 + 26 &  1 + 26 & foundation \\
-3 (MLP)                & 4 + 5  &  5 + 31 & MLP \\
-4 (CNN)                & 2 + 2  &  7 + 33 & $+$ CNN \\
-5 (BN)                 & 2 + 5  &  9 + 38 & $+$ BN-nets \\
-6 (Residual)           & 0 + 1  &  9 + 39 & $+$ ResNet-34 \\
-7 (Depthwise)          & 1 + 2  & 10 + 41 & $+$ MobileNet V2 \\
-8 (SE)                 & 0 + 1  & 10 + 42 & $+$ EfficientNet \\
-9 (LN + GELU)          & 1 + 2  & 11 + 44 & $+$ transformer infra \\
-10 (Attention)         & 9 + 8  & 20 + 52 & $+$ ViT \\
+2 (You Are Here)       & 0 + 27 + 1  &  0 + 27 + 1 & 28  & foundation \\
+3 (MLP)                & 3 + 6 + 0   &  3 + 33 + 1 & 37  & MLP \\
+4 (CNN)                & 2 + 2 + 2   &  5 + 35 + 3 & 43  & $+$ CNN \\
+5 (BN)                 & 0 + 7 + 0   &  5 + 42 + 3 & 50  & $+$ BN-nets \\
+6 (Residual)           & 0 + 1 + 0   &  5 + 43 + 3 & 51  & $+$ ResNet-34 \\
+7 (Depthwise)          & 1 + 2 + 1   &  6 + 45 + 4 & 55  & $+$ MobileNet V2 \\
+8 (SE)                 & 0 + 1 + 0   &  6 + 46 + 4 & 56  & $+$ EfficientNet \\
+9 (LN + GELU)          & 0 + 3 + 2   &  6 + 49 + 6 & 61  & $+$ transformer infra \\
+10 (Attention)         & 4 + 16 + 0  & 10 + 65 + 6 & 81  & $+$ ViT \\
 \hline
 \end{tabular}
 \end{center}
 
-Two observations worth pulling out. First, \textbf{Chapters 6
-and 8 add zero axioms}: residual connections and
-squeeze-and-excitation are pure composition over primitives
-that already exist. That's the scaling claim the book is making
---- new architectures, no new calculus --- in its cleanest form.
-Second, \textbf{Chapter 10's spike comes from composition
-shortcuts}: seven of the nine new axioms are transformer-level
-chains where the symbolic proof is mechanical but not yet
-completed (an active axiom-elimination target). The structural
-calculus itself never changes from Chapter~2 onward.
+The ``Last \#'' column is the highest LaTeX-rendered item number at
+the end of each chapter (axioms, theorems, and definitions share the
+counter), so a reader who sees ``Theorem 81'' near the end of Ch~10
+can look here and confirm where the count came from.
+
+Two observations worth pulling out. First, \textbf{five chapters
+(2, 5, 6, 8, 9) add zero axioms}: every primitive in those
+chapters either inherits from Mathlib's \(\fderiv\) or composes
+over previously-proved theorems. That's the scaling claim the
+book is making --- new architectures, no new calculus --- in its
+cleanest form. Second, \textbf{the only axioms left are at the
+boundaries of smoothness or codegen}: the guarded ReLU
+subgradient and its two existence shortcuts in Chapter~3, the
+input-side VJPs of \(\texttt{conv2d}\) / \(\texttt{maxPool2}\) /
+\(\texttt{depthwiseConv2d}\) where padding boundary and argmax
+routing complicate symbolic differentiation, bundled multi-head
+SDPA, and the opaque ViT patch-embedding interface in
+Chapter~10. Each is a deliberate ``stays axiomatic'' boundary,
+not a deferred proof.
 
 \subsection*{Roadmap: skip to your target architecture}
 
@@ -864,13 +880,16 @@ The workhorse: \(y = Wx + b\) plus ReLU and softmax cross-entropy loss.
   junk-default at non-smooth multi-D points.
 \end{axiom}
 
-\begin{axiom}[Softmax cross-entropy gradient]
+\begin{theorem}[Softmax cross-entropy gradient]
   \label{ax:softmaxCE_grad}
   \lean{Proofs.softmaxCE_grad}
   \leanok
   \uses{ax:pdiv}
   \(\partial L / \partial z = \mathrm{softmax}(z) - \mathrm{onehot}(y)\).
-\end{axiom}
+  Proved by chain rule on \(-\log \circ \mathrm{softmax\_label}\) using
+  \texttt{HasFDerivAt.log} (with \(\mathrm{softmax}(z)[\,\ell\,] > 0\) from
+  exp positivity) composed with the proved \(\mathrm{softmax}\) Jacobian.
+\end{theorem}
 
 \begin{theorem}[Dense VJP]
   \label{thm:dense_has_vjp}
@@ -1550,25 +1569,28 @@ plain \texttt{.conv2d} used here keeps the StableHLO much tighter.
   Derived from foundation rules.
 \end{theorem}
 
-\begin{axiom}[BN inverse-stddev broadcast Jacobian]
+\begin{theorem}[BN inverse-stddev broadcast Jacobian]
   \label{ax:pdiv_bnIstdBroadcast}
   \lean{Proofs.pdiv_bnIstdBroadcast}
   \leanok
   \uses{ax:pdiv}
-  \(\partial \mathrm{istd} / \partial x_i\). The Mathlib derivation via
-  \(\mathrm{Real.sqrt}\) and \(\mathrm{Inv.inv}\) is morally there but
-  not yet formalized; axiomatized.
-\end{axiom}
+  \(\partial \mathrm{istd}/\partial x_i = -\mathrm{istd}^3 \cdot
+  (x_i - \mu)/n\). Proved via the centering \(\mathrm{ContinuousLinearMap}\),
+  \texttt{HasFDerivAt.sqrt} (under \(\mathrm{bnVar} + \varepsilon > 0\)),
+  and \texttt{(hasDerivAt\_inv).comp\_hasFDerivAt}; centered sum
+  collapses by \(\sum_k (x_k - \mu) = 0\).
+\end{theorem}
 
-\begin{axiom}[BN inverse-stddev broadcast smoothness]
+\begin{theorem}[BN inverse-stddev broadcast smoothness]
   \label{ax:bnIstdBroadcast_diff}
   \lean{Proofs.bnIstdBroadcast_diff}
   \leanok
   \(\bnIstdBroadcast\) is \(\Differentiable\) when \(\varepsilon > 0\).
-  Captures the sqrt/recip smoothness of \(1/\sqrt{\sigma^2 + \varepsilon}\)
-  required by \texttt{pdiv\_mul} inside \texttt{pdiv\_bnNormalize}.
-  Same morally-provable cluster as \texttt{pdiv\_bnIstdBroadcast}.
-\end{axiom}
+  Proved via \texttt{Differentiable.sqrt} and \texttt{Differentiable.inv}
+  over \(\mathrm{bnVar} + \varepsilon > 0\); captures the sqrt/recip
+  smoothness of \(1/\sqrt{\sigma^2 + \varepsilon}\) required by
+  \texttt{pdiv\_mul} inside \texttt{pdiv\_bnNormalize}.
+\end{theorem}
 
 \begin{theorem}[BN normalize 3-term VJP]
   \label{thm:bnNormalize_has_vjp}
@@ -2382,13 +2404,16 @@ at this scale.
   Closed form for \(\mathrm{geluScalar}'\).
 \end{definition}
 
-\begin{axiom}[GELU Jacobian]
+\begin{theorem}[GELU Jacobian]
   \label{ax:pdiv_gelu}
   \lean{Proofs.pdiv_gelu}
   \leanok
   \uses{ax:pdiv, ax:geluScalarDeriv}
-  Diagonal activation Jacobian.
-\end{axiom}
+  Diagonal activation Jacobian. Proved via \texttt{fderiv\_apply} +
+  chain rule with \(\mathrm{geluScalar} \circ \mathrm{ContinuousLinearMap.proj}\,
+  j\), then \texttt{fderiv\_eq\_smul\_deriv} to convert scalar
+  \(\fderiv\) to \(\mathrm{deriv}\).
+\end{theorem}
 
 \begin{theorem}[LayerNorm VJP]
   \label{thm:layerNorm_has_vjp}
@@ -2429,13 +2454,17 @@ Chapter~\ref{chap:attention} uses both to define ViT.
 \chapter{Attention and the ViT finale}
 \label{chap:attention}
 
-\begin{axiom}[Softmax Jacobian]
+\begin{theorem}[Softmax Jacobian]
   \label{ax:pdiv_softmax}
   \lean{Proofs.pdiv_softmax}
   \leanok
   \uses{ax:pdiv}
   \(\partial \mathrm{softmax}(z)_j / \partial z_i = p_j (\delta_{ij} - p_i)\).
-\end{axiom}
+  Proved by extracting the j-th coordinate function
+  \(z' \mapsto e^{z'_j} \cdot (\sum_k e^{z'_k})^{-1}\) and chaining
+  \texttt{HasFDerivAt.exp} with \texttt{(hasDerivAt\_inv).comp\_hasFDerivAt}.
+  At \(\basisVec_i\) the sum collapses via \(\sum_k e^{z_k} \cdot \delta_{ki} = e^{z_i}\).
+\end{theorem}
 
 \begin{theorem}[Standalone softmax VJP]
   \label{thm:softmax_has_vjp}
@@ -2482,6 +2511,35 @@ Chapter~\ref{chap:attention} uses both to define ViT.
   multi-head attention. The "vmap over head axis" primitive.
 \end{axiom}
 
+\begin{axiom}[MHSA layer smoothness]
+  \label{ax:mhsa_layer_flat_diff}
+  \lean{Proofs.mhsa_layer_flat_diff}
+  \leanok
+  \(\Differentiable\) sibling of \texttt{mhsa\_has\_vjp\_mat}: the
+  flattened MHSA layer is differentiable. Bundled alongside the VJP
+  axiom because removing it would require the same per-head reduction
+  framework.
+\end{axiom}
+
+\begin{axiom}[Patch-embedding VJP]
+  \label{ax:patchEmbed_flat_has_vjp}
+  \lean{Proofs.patchEmbed_flat_has_vjp}
+  \leanok
+  Opaque-codegen interface for the ViT patch embedding (224\(\times\)224
+  RGB input chopped into 14\(\times\)14 patches and projected to 192-d
+  tokens). Axiomatized because the ``unfold-as-conv-with-stride'' proof
+  requires the spatial-rearrangement machinery from Ch~4 lifted into
+  the matrix world.
+\end{axiom}
+
+\begin{axiom}[Patch-embedding smoothness]
+  \label{ax:patchEmbed_flat_diff}
+  \lean{Proofs.patchEmbed_flat_diff}
+  \leanok
+  \(\Differentiable\) sibling of \texttt{patchEmbed\_flat\_has\_vjp}.
+  Same axiomatization scope as its VJP counterpart.
+\end{axiom}
+
 \begin{theorem}[Per-token LayerNorm lifted to a matrix]
   \label{thm:layerNorm_per_token_has_vjp_mat}
   \lean{Proofs.layerNorm_per_token_has_vjp_mat}
@@ -2503,71 +2561,70 @@ Chapter~\ref{chap:attention} uses both to define ViT.
   \uses{thm:rowwise_has_vjp_mat, thm:gelu_has_vjp}
 \end{theorem}
 
-\begin{axiom}[Row-wise softmax smoothness]
+\begin{theorem}[Row-wise softmax smoothness]
   \label{ax:rowSoftmax_flat_diff}
   \lean{Proofs.rowSoftmax_flat_diff}
   \leanok
-  Smoothness of \(\mathrm{rowSoftmax}\) (the flattened form): the
-  denominator \(\sum_j \exp(M_{rj})\) is positive, so the function is
-  C\(^\infty\) via Mathlib's \(\mathrm{Real.exp}\) calculus. Formal
-  derivation deferred — axiomatized so \texttt{vjpMat\_comp}
-  can compose through it.
-\end{axiom}
+  \(\mathrm{rowSoftmax}\) (the flattened form) is \(\Differentiable\).
+  Proved via Mathlib's \(\mathrm{Real.exp}\) calculus: the denominator
+  \(\sum_j \exp(M_{rj})\) is positive (by \texttt{Finset.sum\_pos}),
+  giving a \texttt{Differentiable.inv} application that finishes the
+  chain.
+\end{theorem}
 
-\begin{axiom}[Transformer MLP sublayer VJP]
+\begin{theorem}[Transformer MLP sublayer VJP]
   \label{thm:transformerMlp_has_vjp_mat}
   \lean{Proofs.transformerMlp_has_vjp_mat}
   \leanok
   \uses{thm:dense_per_token_has_vjp_mat, thm:gelu_per_token_has_vjp_mat}
-  Was a \texttt{vjpMat\_comp} chain of three per-token liftings.
-  Axiomatized after the foundation flip — each \texttt{vjpMat\_comp}
-  now requires \(\Differentiable\) evidence and threading those through
-  the chain is deferred. Morally proven.
-\end{axiom}
+  A \texttt{vjpMat\_comp} chain of three per-token liftings.
+  \(\Differentiable\) hypotheses are now threaded through the chain;
+  proved.
+\end{theorem}
 
-\begin{axiom}[Transformer attention sublayer with residual VJP]
+\begin{theorem}[Transformer attention sublayer with residual VJP]
   \label{thm:transformerAttnSublayer_has_vjp_mat}
   \lean{Proofs.transformerAttnSublayer_has_vjp_mat}
   \leanok
   \uses{thm:layerNorm_per_token_has_vjp_mat, ax:mhsa_has_vjp_mat}
-  Was \(\biPathMat\) of identity and \(\mathrm{mhsa} \circ \mathrm{LN_1}\).
-  Axiomatized for the same reason as \texttt{transformerMlp\_has\_vjp\_mat}.
-\end{axiom}
+  \(\biPathMat\) of identity and \(\mathrm{mhsa} \circ \mathrm{LN_1}\).
+  Diff hypotheses threaded; proved.
+\end{theorem}
 
-\begin{axiom}[Transformer MLP sublayer with residual VJP]
+\begin{theorem}[Transformer MLP sublayer with residual VJP]
   \label{thm:transformerMlpSublayer_has_vjp_mat}
   \lean{Proofs.transformerMlpSublayer_has_vjp_mat}
   \leanok
   \uses{thm:layerNorm_per_token_has_vjp_mat, thm:transformerMlp_has_vjp_mat}
-  Same axiomatization.
-\end{axiom}
+  Diff hypotheses threaded; proved.
+\end{theorem}
 
-\begin{axiom}[Transformer block VJP]
+\begin{theorem}[Transformer block VJP]
   \label{thm:transformerBlock_has_vjp_mat}
   \lean{Proofs.transformerBlock_has_vjp_mat}
   \leanok
   \uses{thm:transformerAttnSublayer_has_vjp_mat, thm:transformerMlpSublayer_has_vjp_mat}
-  Was one \texttt{vjpMat\_comp} glueing the two sublayers. Axiomatized.
-\end{axiom}
+  One \texttt{vjpMat\_comp} glueing the two sublayers. Proved.
+\end{theorem}
 
-\begin{axiom}[Transformer tower, any depth]
+\begin{theorem}[Transformer tower, any depth]
   \label{thm:transformerTower_has_vjp_mat}
   \lean{Proofs.transformerTower_has_vjp_mat}
   \leanok
   \uses{thm:transformerBlock_has_vjp_mat}
-  Was \(k\)-fold induction via \texttt{vjpMat\_comp}. Axiomatized;
-  covers ViT-Tiny / Base / Large.
-\end{axiom}
+  \(k\)-fold induction via \texttt{vjpMat\_comp}; covers ViT-Tiny /
+  Base / Large.
+\end{theorem}
 
-\begin{axiom}[ViT body: the grand finale]
+\begin{theorem}[ViT body: the grand finale]
   \label{thm:vit_body_has_vjp_mat}
   \lean{Proofs.vit_body_has_vjp_mat}
   \leanok
   \uses{thm:transformerTower_has_vjp_mat, thm:layerNorm_per_token_has_vjp_mat}
-  The full ViT transformer backbone as one \(\HasVJPMat\). Was
+  The full ViT transformer backbone as one \(\HasVJPMat\):
   \(\mathrm{finalLN} \circ \mathrm{transformerTower}\) glued by
-  \texttt{vjpMat\_comp}; axiomatized after the foundation flip.
-\end{axiom}
+  \texttt{vjpMat\_comp}.
+\end{theorem}
 
 \section{Example: ViT-Tiny on Imagenette}
 \label{sec:attention_vit_example}
@@ -4441,61 +4498,70 @@ through all three.
 
 \section{Axioms}
 
-The Verified VJP Proofs suite contains \textbf{20 axioms, 52
-theorems, and 28 definitions} across 9 Lean files. This is a
-meaningful shrink from earlier drafts (30 axioms, 45 theorems,
-22 definitions): the foundation flip elevated the calculus
-axioms (chain rule, sum rule, product rule, identity, reindex)
-to theorems proved from Mathlib's \(\fderiv\), and several
+The Verified VJP Proofs suite contains \textbf{81 numbered
+items across the proof chapters (10 axioms + 65 theorems +
+6 definitions), plus 22 architecture definitions in the
+bestiary} (103 total) across 9 Lean files. This is a deep
+shrink from earlier drafts (30 axioms, 45 theorems, 22
+definitions): the foundation flip elevated the calculus axioms
+(chain rule, sum rule, product rule, identity, reindex) to
+theorems proved from Mathlib's \(\fderiv\); several
 chapter-specific opaque forwards (\(\texttt{conv2d}\),
 \(\texttt{maxPool2}\), \(\texttt{depthwiseConv2d}\),
 \(\texttt{geluScalar}\)) became concrete definitions whose
-Jacobians are derived rather than asserted. The 20 surviving
-axioms fall into four buckets:
+Jacobians are derived; and the diff-threading branch closed out
+every remaining ``provable but deferred'' Jacobian
+(\(\pdivMat\) row independence, BN inverse-stddev broadcast,
+softmax, softmax cross-entropy, GELU, row-wise softmax
+smoothness, all seven transformer-level composition chains).
+The 10 surviving axioms are all genuine non-smoothness or
+bundled-codegen boundaries, falling into four buckets:
 
 \begin{itemize}
-  \item \textbf{Structural residual} (1): \(\pdivMat\) row
-    independence --- the matrix-level analogue of \(\pdiv\)'s
-    structure that doesn't fall directly out of the scalar
-    foundation.
-  \item \textbf{Elementary Jacobians} (6): the closed-form
-    Jacobian of an operation where the foundation proof is
-    deferred --- ReLU's guarded subgradient, softmax
-    cross-entropy, BN inverse-stddev broadcast (plus its
-    smoothness lemma under \(\varepsilon > 0\)), GELU, and
-    softmax. Each has a finite-difference test in
-    \texttt{check\_axioms.py}.
+  \item \textbf{Subgradient at non-smooth points} (3, all in
+    Ch~3): the guarded \(\pdiv\_relu\) axiom plus its two
+    existence shortcuts \(\texttt{relu\_has\_vjp}\) and
+    \(\texttt{mlp\_has\_vjp}\). ReLU is non-differentiable at
+    zero; the deep-learning convention picks a one-sided
+    subgradient and these axioms encode that choice.
   \item \textbf{Bundled input VJPs} (3): \(\texttt{conv2d}\),
     \(\texttt{maxPool2}\), and \(\texttt{depthwiseConv2d}\)
     each contribute one axiom asserting the input-side backward
     function. Their forward operators and their weight/bias
-    gradients are now proved from the foundation, so these are
-    the only opaque pieces left in their respective layers.
-  \item \textbf{Composition shortcuts} (10): higher-level
-    chains where the symbolic proof is mechanical but not yet
-    completed --- the ReLU and MLP composition shortcuts at the
-    Ch~3 boundary, multi-head SDPA, and seven transformer-level
-    chains (sublayers with and without residuals, the block,
-    the tower, the ViT body). These are valid targets for
-    future axiom-elimination work.
+    gradients are now proved from the foundation; only the
+    input-side VJPs stay axiomatic because of padding-boundary
+    and argmax-routing conventions.
+  \item \textbf{Bundled multi-head SDPA} (2):
+    \(\texttt{mhsa\_has\_vjp\_mat}\) wraps the per-head
+    softmax-attention chain into one \(\HasVJPMat\), with
+    \(\texttt{mhsa\_layer\_flat\_diff}\) as its
+    \(\Differentiable\) sibling. Removing them would require
+    a per-head reduction framework beyond Chapter~10's scope.
+  \item \textbf{Patch-embedding interface} (2):
+    \(\texttt{patchEmbed\_flat\_has\_vjp}\) and its
+    \(\Differentiable\) sibling
+    \(\texttt{patchEmbed\_flat\_diff}\) cover the ViT
+    patch-embedding step (224\(\times\)224 RGB into 196 16-d
+    patches projected to 192-d tokens). Opaque-codegen
+    boundary: the ``unfold-as-conv-with-stride'' proof needs
+    spatial-rearrangement machinery from Ch~4 lifted into the
+    matrix world.
 \end{itemize}
 
-Everything else --- 52 theorems, 28 definitions --- is
-composition over the foundation and these axioms, glued by the
-structural rules (chain, additive fan-in, multiplicative fan-in,
-three-tensor extension) and the closed-form Jacobian tricks each
-chapter introduces. The book's central claim --- ``new
-architectures, no new calculus'' --- still holds: each chapter
-after Chapter~\ref{chap:tensor} adds at most a handful of
-bundled axioms for its new primitive and a small number of
-composition theorems to stitch them in. The structural calculus
-itself never changes.
+Everything else --- 65 theorems, 28 definitions --- is
+composition over the foundation and these 10 axioms, glued by
+the structural rules (chain, additive fan-in, multiplicative
+fan-in, three-tensor extension) and the closed-form Jacobian
+tricks each chapter introduces. The book's central claim ---
+``new architectures, no new calculus'' --- holds in its
+strongest form: five of the nine content chapters (Ch~2,
+Ch~5, Ch~6, Ch~8, Ch~9) add zero new axioms.
 
 \section{Finite-difference gradient checks}
 
-The Elementary-Jacobian and Bundled-input-VJP axioms above are
-the ones not proved symbolically in Lean --- they're validated
-by finite-difference gradient checks in
+The Bundled-input-VJP axioms above are the ones not proved
+symbolically in Lean --- they're validated by finite-difference
+gradient checks in
 \texttt{LeanMlir/Proofs/check\_axioms.py}. For each opaque
 forward, the script perturbs the input by \(\varepsilon\),
 compares the claimed VJP against the centered difference
