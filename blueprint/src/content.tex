@@ -4559,26 +4559,45 @@ Ch~5, Ch~6, Ch~8, Ch~9) add zero new axioms.
 
 \section{Finite-difference gradient checks}
 
-The Bundled-input-VJP axioms above are the ones not proved
-symbolically in Lean --- they're validated by finite-difference
-gradient checks in
-\texttt{LeanMlir/Proofs/check\_axioms.py}. For each opaque
-forward, the script perturbs the input by \(\varepsilon\),
-compares the claimed VJP against the centered difference
+The script \texttt{LeanMlir/Proofs/check\_axioms.py} runs 25
+finite-difference gradient checks. For each, it perturbs the
+input by \(\varepsilon\), compares the claimed VJP against the
+centered difference
 \((f(x + \varepsilon) - f(x - \varepsilon)) / 2\varepsilon\),
-and asserts agreement within tolerance. Between Lean's
-composition proofs and Python's numerical checks, nothing is
-taken on faith.
+and asserts agreement within tolerance (typical max-error
+\(\sim 10^{-11}\) at \(\varepsilon = 10^{-5}\) in float64).
 
-FD is cheap, easy to reason about, and tight enough for spot-checking
-formulas (\(\sim 10^{-5}\) at \(\varepsilon = 10^{-3}\), bounded
-below by the truncation-vs-rounding tradeoff). What it can't do:
-probe what the \emph{compiled} code actually computes on the GPU ---
-only what the axiom's formula says in Python. And it struggles at
-non-smooth points (ReLU at zero, maxPool tiebreaks, GELU's
-derivative-sign transitions) where the limit definition breaks down.
-For those gaps and for end-to-end pipeline verification, the third
-layer takes over.
+The coverage is deliberately broad: 7 of the 10 surviving
+axioms are FD-tested directly --- \(\pdiv\_\texttt{relu}\) at
+non-zero points, \(\texttt{mlp\_has\_vjp}\) by full-network
+chain-rule composition, the input VJPs of \(\texttt{conv2d}\) /
+\(\texttt{maxPool2}\) / \(\texttt{depthwiseConv2d}\), the
+bundled \(\texttt{mhsa\_has\_vjp\_mat}\) (per-head sdpa\_back
+stacked over the head axis), and
+\(\texttt{patchEmbed\_flat\_has\_vjp}\) --- and the remaining 18
+checks belt-and-suspender the \emph{proved} Jacobian theorems
+(\(\pdiv\_\texttt{dense}\), all four BN pieces, the softmax
+Jacobian, softmax cross-entropy, GELU, conv / depthwise weight
+and bias grads, and the three single-head SDPA Q/K/V backwards).
+Even though those formulas are proved symbolically, a numerical
+check confirms the formula in the proof matches the formula the
+prose claims.
+
+The three axioms that aren't FD-tested are
+\(\texttt{relu\_has\_vjp}\) (a pure existence shortcut, redundant
+with \(\pdiv\_\texttt{relu}\) which is tested) and the two
+\(\Differentiable\) siblings \(\texttt{mhsa\_layer\_flat\_diff}\)
+and \(\texttt{patchEmbed\_flat\_diff}\) --- smoothness claims,
+not Jacobian formulas, so FD has no purchase on them.
+
+FD is cheap, easy to reason about, and tight enough for
+spot-checking formulas, but it struggles at non-smooth points
+(ReLU at zero, maxPool tiebreaks, GELU's derivative-sign
+transitions) where the limit definition breaks down, and it
+can't probe what the \emph{compiled} code actually computes on
+the GPU --- only what the formula says in Python. For those
+gaps and for end-to-end pipeline verification, the third layer
+takes over.
 
 \section{The JAX parallel pipeline}
 

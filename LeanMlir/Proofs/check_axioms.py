@@ -781,6 +781,121 @@ def test_patch_embed_flat():
     return err < TOL
 
 # ════════════════════════════════════════════════════════════════
+# MLP composition: Dense → ReLU → Dense → ReLU → Dense + softmax CE.
+# Tests the bundled `mlp_has_vjp` axiom by composing the chain-rule
+# input gradient and comparing it to FD on the full network's loss.
+# Catches composition errors that the per-axiom checks can't see.
+# ════════════════════════════════════════════════════════════════
+def test_mlp_full():
+    n_in, h1, h2, c = 8, 6, 4, 3
+    label = 1
+    W1 = np.random.randn(n_in, h1) * 0.5
+    b1 = np.random.randn(h1) * 0.5 + 1.0   # bias positive to avoid ReLU kink
+    W2 = np.random.randn(h1, h2) * 0.5
+    b2 = np.random.randn(h2) * 0.5 + 1.0
+    W3 = np.random.randn(h2, c) * 0.5
+    b3 = np.random.randn(c) * 0.5
+
+    def softmax(z):
+        e = np.exp(z - z.max())
+        return e / e.sum()
+
+    def loss_of(x):
+        y1 = x @ W1 + b1
+        z1 = np.maximum(y1, 0.0)
+        y2 = z1 @ W2 + b2
+        z2 = np.maximum(y2, 0.0)
+        y3 = z2 @ W3 + b3
+        return -np.log(softmax(y3)[label])
+
+    def mlp_input_grad(x):
+        # Forward (recompute activations for backward).
+        y1 = x @ W1 + b1
+        z1 = np.maximum(y1, 0.0)
+        y2 = z1 @ W2 + b2
+        z2 = np.maximum(y2, 0.0)
+        y3 = z2 @ W3 + b3
+        # Backward chain: softmax CE → Dense3 → ReLU → Dense2 → ReLU → Dense1.
+        oh = np.zeros(c); oh[label] = 1.0
+        dy3 = softmax(y3) - oh
+        dz2 = W3 @ dy3
+        dy2 = (y2 > 0).astype(float) * dz2
+        dz1 = W2 @ dy2
+        dy1 = (y1 > 0).astype(float) * dz1
+        return W1 @ dy1
+
+    x = np.random.randn(n_in)
+    dx_claimed = mlp_input_grad(x)
+    dx_fd = np.zeros(n_in)
+    for i in range(n_in):
+        xp = x.copy(); xp[i] += EPS
+        xm = x.copy(); xm[i] -= EPS
+        dx_fd[i] = (loss_of(xp) - loss_of(xm)) / (2 * EPS)
+
+    err = np.max(np.abs(dx_fd - dx_claimed))
+    status = "PASS" if err < TOL else "FAIL"
+    print(f"  {status}: {'mlp_has_vjp (full network)':30s} max_err={err:.2e}")
+    if err >= TOL:
+        idx = int(np.argmax(np.abs(dx_fd - dx_claimed)))
+        print(f"         worst at {idx}: fd={dx_fd[idx]:.8f} claimed={dx_claimed[idx]:.8f}")
+    return err < TOL
+
+# ════════════════════════════════════════════════════════════════
+# Multi-head SDPA: H independent single-head SDPAs stacked along the
+# head axis. The bundled `mhsa_has_vjp_mat` axiom asserts the VJP
+# factors per head; this test confirms that the per-head sdpa_back_*
+# stacked over heads matches FD on the full multi-head forward.
+# ════════════════════════════════════════════════════════════════
+def test_mhsa_full():
+    n, H, d_h = 4, 2, 3
+    Q = np.random.randn(H, n, d_h)
+    K = np.random.randn(H, n, d_h)
+    V = np.random.randn(H, n, d_h)
+    dOut = np.random.randn(H, n, d_h)
+
+    def mhsa_fwd(Q_, K_, V_):
+        out = np.zeros((H, n, d_h))
+        for h in range(H):
+            out[h] = _sdpa_forward(Q_[h], K_[h], V_[h])
+        return out
+
+    # Claimed: per-head sdpa_back_* stacked along H axis.
+    dQ_claimed = np.zeros_like(Q)
+    dK_claimed = np.zeros_like(K)
+    dV_claimed = np.zeros_like(V)
+    for h in range(H):
+        dQ_claimed[h] = _sdpa_back_Q(Q[h], K[h], V[h], dOut[h])
+        dK_claimed[h] = _sdpa_back_K(Q[h], K[h], V[h], dOut[h])
+        dV_claimed[h] = _sdpa_back_V(Q[h], K[h], V[h], dOut[h])
+
+    def fd_grad(base):
+        g = np.zeros_like(base)
+        it = np.nditer(base, flags=["multi_index"])
+        while not it.finished:
+            idx = it.multi_index
+            saved = base[idx]
+            base[idx] = saved + EPS
+            fp = np.sum(mhsa_fwd(Q, K, V) * dOut)
+            base[idx] = saved - EPS
+            fm = np.sum(mhsa_fwd(Q, K, V) * dOut)
+            base[idx] = saved
+            g[idx] = (fp - fm) / (2 * EPS)
+            it.iternext()
+        return g
+
+    all_ok = True
+    for label, base, claimed in [("Q", Q, dQ_claimed),
+                                  ("K", K, dK_claimed),
+                                  ("V", V, dV_claimed)]:
+        fd = fd_grad(base)
+        err = np.max(np.abs(fd - claimed))
+        status = "PASS" if err < TOL else "FAIL"
+        print(f"  {status}: {f'mhsa_has_vjp_mat ({label})':30s} max_err={err:.2e}")
+        if err >= TOL:
+            all_ok = False
+    return all_ok
+
+# ════════════════════════════════════════════════════════════════
 # Run all
 # ════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
@@ -793,6 +908,7 @@ if __name__ == "__main__":
     results.append(("MLP.lean",     "pdiv_dense_b",         test_dense_bias_grad()))
     results.append(("MLP.lean",     "pdiv_relu",            test_relu()))
     results.append(("MLP.lean",     "softmaxCE_grad",       test_softmax_ce()))
+    results.append(("MLP.lean",     "mlp_has_vjp",          test_mlp_full()))
     results.append(("CNN.lean",     "conv2d_input_grad",    test_conv2d_input_grad_formula()))
     results.append(("CNN.lean",     "conv2d_weight_grad",   test_conv2d_weight_grad()))
     results.append(("CNN.lean",     "conv2d_bias_grad",     test_conv2d_bias_grad()))
@@ -806,6 +922,7 @@ if __name__ == "__main__":
     results.append(("Attention",    "sdpa_back_K",          test_sdpa_back_K()))
     results.append(("Attention",    "sdpa_back_V",          test_sdpa_back_V()))
     results.append(("Attention",    "patchEmbed_flat",      test_patch_embed_flat()))
+    results.append(("Attention",    "mhsa_has_vjp_mat",     test_mhsa_full()))
     results.append(("Depthwise",    "depthwise_input_grad", test_depthwise_input_grad()))
     results.append(("Depthwise",    "depthwise_weight_grad", test_depthwise_weight_grad()))
     results.append(("Depthwise",    "depthwise_bias_grad",   test_depthwise_bias_grad()))
