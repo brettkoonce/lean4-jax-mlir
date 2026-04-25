@@ -270,7 +270,12 @@ theorem pdiv_bnAffine (n : Nat) (γ β : ℝ)
         (fun v i =>
           (fun (y : Vec n) (k : Fin n) => γ * y k) v i +
           (fun (_ : Vec n) (_ : Fin n) => β) v i) from rfl]
-  rw [pdiv_add]
+  have h_lin_diff : DifferentiableAt ℝ
+      (fun (y : Vec n) (k : Fin n) => γ * y k) v := by fun_prop
+  have h_const_β_diff : DifferentiableAt ℝ
+      (fun (_ : Vec n) (_ : Fin n) => β) v :=
+    differentiableAt_const _
+  rw [pdiv_add _ _ _ h_lin_diff h_const_β_diff]
   -- Constant term: pdiv = 0.
   rw [show pdiv (fun (_ : Vec n) (_ : Fin n) => β) v i j = 0
       from pdiv_const (fun _ : Fin n => β) v i j]
@@ -279,7 +284,12 @@ theorem pdiv_bnAffine (n : Nat) (γ β : ℝ)
         (fun y k =>
           (fun (_ : Vec n) (_ : Fin n) => γ) y k *
           (fun (y' : Vec n) => y') y k) from rfl]
-  rw [pdiv_mul]
+  have h_const_γ_diff : DifferentiableAt ℝ
+      (fun (_ : Vec n) (_ : Fin n) => γ) v :=
+    differentiableAt_const _
+  have h_id_diff : DifferentiableAt ℝ
+      (fun (y' : Vec n) => y') v := differentiableAt_id
+  rw [pdiv_mul _ _ _ h_const_γ_diff h_id_diff]
   rw [show pdiv (fun (_ : Vec n) (_ : Fin n) => γ) v i j = 0
       from pdiv_const (fun _ : Fin n => γ) v i j]
   rw [pdiv_id]
@@ -344,7 +354,10 @@ theorem pdiv_bnCentered (n : Nat) (x : Vec n) (i j : Fin n) :
     funext y k
     unfold bnCentered bnMean
     ring]
-  rw [pdiv_add, pdiv_id]
+  have h_id_diff : DifferentiableAt ℝ (fun y' : Vec n => y') x := differentiableAt_id
+  have h_negMean_diff : DifferentiableAt ℝ
+      (fun (y' : Vec n) (_ : Fin n) => -((∑ s : Fin n, y' s) / (n : ℝ))) x := by fun_prop
+  rw [pdiv_add _ _ _ h_id_diff h_negMean_diff, pdiv_id]
   -- Step 2: factor the negMean term as (constant -1/n) * (sum).
   rw [show (fun (y' : Vec n) (_ : Fin n) => -((∑ s : Fin n, y' s) / (n : ℝ))) =
         (fun y' k =>
@@ -352,14 +365,23 @@ theorem pdiv_bnCentered (n : Nat) (x : Vec n) (i j : Fin n) :
           (fun (z : Vec n) (_ : Fin n) => ∑ s : Fin n, z s) y' k) from by
     funext y' k
     ring]
-  rw [pdiv_mul]
+  have h_neg_const_diff : DifferentiableAt ℝ
+      (fun (_ : Vec n) (_ : Fin n) => -(1 / (n : ℝ))) x :=
+    differentiableAt_const _
+  have h_sum_diff : DifferentiableAt ℝ
+      (fun (z : Vec n) (_ : Fin n) => ∑ s : Fin n, z s) x := by fun_prop
+  rw [pdiv_mul _ _ _ h_neg_const_diff h_sum_diff]
   rw [show pdiv (fun (_ : Vec n) (_ : Fin n) => -(1 / (n : ℝ))) x i j = 0
       from pdiv_const (fun _ : Fin n => -(1 / (n : ℝ))) x i j]
   -- Step 3: pdiv of `∑ s, z s` via pdiv_finset_sum + pdiv_reindex.
   rw [show (fun (z : Vec n) (_ : Fin n) => ∑ s : Fin n, z s) =
         (fun z k => ∑ s : Fin n,
           (fun (z' : Vec n) (_ : Fin n) => z' s) z k) from rfl]
-  rw [pdiv_finset_sum]
+  have h_proj_diff : ∀ s ∈ (Finset.univ : Finset (Fin n)),
+      DifferentiableAt ℝ (fun (z' : Vec n) (_ : Fin n) => z' s) x := by
+    intro s _
+    exact (reindexCLM (fun _ : Fin n => s)).differentiableAt
+  rw [pdiv_finset_sum _ _ _ h_proj_diff]
   have h_term : ∀ s : Fin n,
       pdiv (fun (z' : Vec n) (_ : Fin n) => z' s) x i j =
         if i = s then (1 : ℝ) else 0 := by
@@ -371,6 +393,18 @@ theorem pdiv_bnCentered (n : Nat) (x : Vec n) (i j : Fin n) :
   rw [Finset.sum_ite_eq Finset.univ i (fun _ : Fin n => (1 : ℝ))]
   simp
   ring
+
+/-- **Smoothness of `bnIstdBroadcast`** — axiomatized.
+
+    `bnIstdBroadcast n ε x = 1/√(σ²(x) + ε)` is C^∞ when `ε > 0`
+    (since `σ²(x) + ε ≥ ε > 0`, so `Real.sqrt` and reciprocal are
+    smooth at every point of the domain). The Mathlib derivation
+    via `Real.sqrt`'s `hasDerivAt` and `HasDerivAt.inv` is doable
+    but not in scope here — we axiomatize alongside the existing
+    `pdiv_bnIstdBroadcast` so `pdiv_mul` and `vjp_comp` calls in
+    the BN chain can discharge their `Differentiable` hypotheses. -/
+axiom bnIstdBroadcast_diff (n : Nat) (ε : ℝ) (hε : 0 < ε) :
+    Differentiable ℝ (bnIstdBroadcast n ε)
 
 /-- **Broadcast inverse-stddev Jacobian** — axiomatized elementary fact.
 
@@ -397,7 +431,8 @@ axiom pdiv_bnIstdBroadcast (n : Nat) (ε : ℝ) (x : Vec n) (i j : Fin n) :
     Proof: factor `bnXhat = bnCentered · bnIstdBroadcast`, apply
     `pdiv_mul`, substitute the two elementary Jacobians, then expand
     `x̂ₖ = (xₖ - μ) · istd` and collapse with `ring`. -/
-theorem pdiv_bnNormalize (n : Nat) (ε : ℝ) (x : Vec n) (i j : Fin n) :
+theorem pdiv_bnNormalize (n : Nat) (ε : ℝ) (hε : 0 < ε)
+    (x : Vec n) (i j : Fin n) :
     pdiv (bnNormalize n ε) x i j =
       bnIstd n x ε / (n : ℝ) *
         ((n : ℝ) * (if i = j then 1 else 0) - 1 - bnXhat n ε x i * bnXhat n ε x j) := by
@@ -407,8 +442,14 @@ theorem pdiv_bnNormalize (n : Nat) (ε : ℝ) (x : Vec n) (i j : Fin n) :
     funext y
     exact bnXhat_eq_product n ε y
   rw [show bnNormalize n ε = bnNormalize n ε from rfl, hfactor]
-  -- Step 2: apply pdiv_mul.
-  rw [pdiv_mul]
+  -- Step 2: apply pdiv_mul. Both factors are Differentiable: bnCentered is
+  -- linear (proved via fun_prop), bnIstdBroadcast is smooth when ε > 0
+  -- (axiomatized as bnIstdBroadcast_diff).
+  have h_centered_diff : DifferentiableAt ℝ (bnCentered n) x := by
+    unfold bnCentered bnMean; fun_prop
+  have h_istd_diff : DifferentiableAt ℝ (bnIstdBroadcast n ε) x :=
+    (bnIstdBroadcast_diff n ε hε) x
+  rw [pdiv_mul _ _ _ h_centered_diff h_istd_diff]
   -- Step 3: substitute the two elementary Jacobians.
   rw [pdiv_bnCentered, pdiv_bnIstdBroadcast]
   -- Step 4: expand x̂ on the RHS and collapse with `ring`.
@@ -438,7 +479,7 @@ noncomputable def bnAffine_has_vjp (n : Nat) (γ β : ℝ) :
 /-- **Normalize VJP** (the hard half): the consolidated formula with γ = 1.
 
     `back(x, dx̂)ᵢ = (1/N) · istd · (N · dx̂ᵢ − Σⱼ dx̂ⱼ − x̂ᵢ · Σⱼ x̂ⱼ · dx̂ⱼ)` -/
-noncomputable def bnNormalize_has_vjp (n : Nat) (ε : ℝ) :
+noncomputable def bnNormalize_has_vjp (n : Nat) (ε : ℝ) (hε : 0 < ε) :
     HasVJP (bnNormalize n ε) where
   backward := fun x dxhat =>
     let xh := bnXhat n ε x
@@ -450,7 +491,7 @@ noncomputable def bnNormalize_has_vjp (n : Nat) (ε : ℝ) :
       invN * s * ((n : ℝ) * dxhat i - sumDx - xh i * sumXhatDx)
   correct := by
     intro x dxhat i
-    simp only [pdiv_bnNormalize]
+    simp_rw [pdiv_bnNormalize n ε hε x i]
     set s := bnIstd n x ε
     set xh := bnXhat n ε x
     -- LHS: (1/n) * s * (n * dxhat i - Σ dxhat - xh i * Σ(xh·dxhat))
@@ -488,18 +529,32 @@ noncomputable def bnNormalize_has_vjp (n : Nat) (ε : ℝ) :
     MLIR emits: lines 773 (`d_norm = grad * gamma_bc`) followed by
     lines 794–801 (the consolidated three-term formula).
 -/
-noncomputable def bn_has_vjp (n : Nat) (ε γ β : ℝ) :
+noncomputable def bn_has_vjp (n : Nat) (ε γ β : ℝ) (hε : 0 < ε) :
     HasVJP (bnForward n ε γ β) := by
   rw [bnForward_eq_compose]
+  have h_normalize_diff : Differentiable ℝ (bnNormalize n ε) := by
+    rw [show bnNormalize n ε =
+          (fun y : Vec n => fun k : Fin n =>
+            bnCentered n y k * bnIstdBroadcast n ε y k) from by
+      funext y; exact bnXhat_eq_product n ε y]
+    have h_centered : Differentiable ℝ (bnCentered n) := by
+      have h_eq : (bnCentered n : Vec n → Vec n) =
+                  fun x => fun j => x j - (∑ i, x i) * ((n : ℝ))⁻¹ := by
+        funext x j; unfold bnCentered bnMean; ring
+      rw [h_eq]; fun_prop
+    exact h_centered.mul (bnIstdBroadcast_diff n ε hε)
+  have h_affine_diff : Differentiable ℝ (bnAffine n γ β) := by
+    unfold bnAffine; fun_prop
   exact vjp_comp (bnNormalize n ε) (bnAffine n γ β)
-    (bnNormalize_has_vjp n ε) (bnAffine_has_vjp n γ β)
+    h_normalize_diff h_affine_diff
+    (bnNormalize_has_vjp n ε hε) (bnAffine_has_vjp n γ β)
 
 /-- The standalone end-to-end theorem: `bn_grad_input` is the correct VJP
     of `bnForward`. Follows from `bn_has_vjp` by definitional unfolding. -/
-theorem bn_input_grad_correct (n : Nat) (ε γ β : ℝ)
+theorem bn_input_grad_correct (n : Nat) (ε γ β : ℝ) (hε : 0 < ε)
     (x : Vec n) (dy : Vec n) (i : Fin n) :
     bn_grad_input n ε γ x dy i =
     ∑ j : Fin n, pdiv (bnForward n ε γ β) x i j * dy j := by
-  exact (bn_has_vjp n ε γ β).correct x dy i
+  exact (bn_has_vjp n ε γ β hε).correct x dy i
 
 end Proofs
