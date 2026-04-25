@@ -1,6 +1,9 @@
 import LeanMlir.Proofs.Tensor
 import LeanMlir.Proofs.BatchNorm
 import Mathlib.Analysis.SpecialFunctions.ExpDeriv
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Analysis.Calculus.Deriv.Basic
 
 /-!
 # LayerNorm & GELU
@@ -111,31 +114,28 @@ taxonomy is "1D normalization + your choice of axis."
 -- § GELU
 -- ════════════════════════════════════════════════════════════════
 
-/-- **GELU forward** — Gaussian Error Linear Unit.
+/-- **GELU forward** — Gaussian Error Linear Unit, tanh approximation.
 
-    Exact form: `gelu(x) = x * Phi(x)` where `Phi` is the normal CDF.
+    `gelu(x) = 0.5 · x · (1 + tanh(√(2/π) · (x + 0.044715 · x³)))`
 
-    We define it abstractly via an axiomatized `geluScalar` function
-    rather than wrangling `Real.erf`. What matters for the VJP is
-    the derivative — not the specific closed form of the forward.
-
-    MLIR uses the tanh approximation; both forms have the same
-    elementwise Jacobian shape (diagonal, non-binary). -/
-axiom geluScalar : ℝ → ℝ
+    Matches the MLIR codegen (which emits the tanh approximation rather
+    than the exact `x · Φ(x)` erf form). No longer an axiom. -/
+noncomputable def geluScalar (x : ℝ) : ℝ :=
+  0.5 * x * (1 + Real.tanh (Real.sqrt (2 / Real.pi) * (x + 0.044715 * x^3)))
 
 /-- The elementwise GELU, applied componentwise to a vector. -/
 noncomputable def gelu (n : Nat) (x : Vec n) : Vec n :=
   fun i => geluScalar (x i)
 
-/-- **GELU has a diagonal Jacobian**.
+/-- **Scalar derivative of `geluScalar`** — defined as Mathlib's `deriv`.
 
-    `d(gelu)_j/dx_i = delta_{ij} * geluScalarDeriv(x_i)`
-
-    where `geluScalarDeriv(x) = Phi(x) + x * phi(x)` and `phi` is the normal
-    PDF. The important fact is: only the `j = i` case is nonzero.
-    Different outputs depend only on their own corresponding input —
-    same as every other elementwise activation. -/
-axiom geluScalarDeriv : ℝ → ℝ
+    Concretely, this is `Φ(x) + x · φ(x)` for the exact form, or the
+    analytical derivative of the tanh approximation for our chosen
+    `geluScalar`. We define it via `deriv` rather than writing the
+    closed form so the connection to `geluScalar` is automatic.
+    No longer an axiom. -/
+noncomputable def geluScalarDeriv (x : ℝ) : ℝ :=
+  deriv geluScalar x
 
 axiom pdiv_gelu (n : Nat) (x : Vec n) (i j : Fin n) :
     pdiv (gelu n) x i j =
