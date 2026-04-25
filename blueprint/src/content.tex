@@ -320,60 +320,65 @@ the partial-derivative function \(\pdiv\), its three structural rules
 \(\HasVJPMat\), \(\HasVJPthree\), one per tensor rank) that bundle a
 backward function with its correctness claim.
 
-\begin{axiom}[Partial derivative]
+\begin{definition}[Partial derivative]
   \label{ax:pdiv}
   \lean{Proofs.pdiv}
   \leanok
   The partial derivative function. For \(f : \Vect{m} \to \Vect{n}\),
-  \(\pdiv\, f\, x\, i\, j\) is the \((i, j)\)-entry of the Jacobian at \(x\).
-\end{axiom}
+  \(\pdiv\, f\, x\, i\, j\) is the \((i, j)\)-entry of the Jacobian at \(x\),
+  defined as \(\fderiv_{\R}\, f\, x\, (\basisVec_i)\, j\) — the
+  \(j\)-th coordinate of Mathlib's Fréchet derivative applied to the
+  \(i\)-th standard basis vector.
+\end{definition}
 
-\begin{axiom}[Chain rule]
+\begin{theorem}[Chain rule]
   \label{ax:pdiv_comp}
   \lean{Proofs.pdiv_comp}
   \leanok
   \uses{ax:pdiv}
-  \(\pdiv(g \circ f)\, x\, i\, k = \sum_j \pdiv f\, x\, i\, j \cdot \pdiv g\, (f\, x)\, j\, k\).
-\end{axiom}
+  \(\pdiv(g \circ f)\, x\, i\, k = \sum_j \pdiv f\, x\, i\, j \cdot \pdiv g\, (f\, x)\, j\, k\),
+  conditional on \(f\) differentiable at \(x\) and \(g\) differentiable at \(f(x)\).
+\end{theorem}
 
-\begin{axiom}[Sum rule]
+\begin{theorem}[Sum rule]
   \label{ax:pdiv_add}
   \lean{Proofs.pdiv_add}
   \leanok
   \uses{ax:pdiv}
-  Linearity of the derivative.
-\end{axiom}
+  Linearity of the derivative; conditional on both summands differentiable at \(x\).
+\end{theorem}
 
-\begin{axiom}[Product rule]
+\begin{theorem}[Product rule]
   \label{ax:pdiv_mul}
   \lean{Proofs.pdiv_mul}
   \leanok
   \uses{ax:pdiv}
-  Pointwise Leibniz rule for elementwise products.
-\end{axiom}
+  Pointwise Leibniz rule for elementwise products; conditional on both factors
+  differentiable at \(x\).
+\end{theorem}
 
-\begin{axiom}[Identity Jacobian]
+\begin{theorem}[Identity Jacobian]
   \label{ax:pdiv_id}
   \lean{Proofs.pdiv_id}
   \leanok
   \uses{ax:pdiv}
   \(\pdiv(\mathrm{id})\, x\, i\, j = \delta_{ij}\).
-\end{axiom}
+\end{theorem}
 
-\begin{axiom}[Constant has zero Jacobian]
+\begin{theorem}[Constant has zero Jacobian]
   \label{ax:pdiv_const}
   \lean{Proofs.pdiv_const}
   \leanok
   \uses{ax:pdiv}
-\end{axiom}
+\end{theorem}
 
-\begin{axiom}[Gather / reindex Jacobian]
+\begin{theorem}[Gather / reindex Jacobian]
   \label{ax:pdiv_reindex}
   \lean{Proofs.pdiv_reindex}
   \leanok
   \uses{ax:pdiv}
   Covers permutations, reshapes, slicing. Generalizes \texttt{pdiv\_id}.
-\end{axiom}
+\end{theorem}
 
 \begin{axiom}[Row-independence for matrices]
   \label{ax:pdivMat_rowIndep}
@@ -809,27 +814,32 @@ cites \(\to\) move on.'' The dependency DAG is your friend.
 
 The workhorse: \(y = Wx + b\) plus ReLU and softmax cross-entropy loss.
 
-\begin{axiom}[Dense Jacobian wrt input]
+\begin{theorem}[Dense Jacobian wrt input]
   \label{ax:pdiv_dense}
   \lean{Proofs.pdiv_dense}
   \leanok
-  \uses{ax:pdiv}
-  \(\partial (Wx + b)_j / \partial x_i = W_{ij}\).
-\end{axiom}
+  \uses{ax:pdiv, ax:pdiv_add, ax:pdiv_mul, ax:pdiv_const, ax:pdiv_finset_sum, ax:pdiv_reindex}
+  \(\partial (Wx + b)_j / \partial x_i = W_{ij}\). Derived from foundation rules.
+\end{theorem}
 
-\begin{axiom}[Dense Jacobian wrt weight]
+\begin{theorem}[Dense Jacobian wrt weight]
   \label{ax:pdiv_dense_W}
   \lean{Proofs.pdiv_dense_W}
   \leanok
-  \uses{ax:pdiv}
-  \(\partial (Wx + b)_j / \partial W_{i'j'} = x_{i'} \delta_{jj'}\). Phase 7.
-\end{axiom}
+  \uses{ax:pdiv, ax:pdiv_add, ax:pdiv_mul, ax:pdiv_const, ax:pdiv_finset_sum, ax:pdiv_reindex}
+  \(\partial (Wx + b)_j / \partial W_{i'j'} = x_{i'} \delta_{jj'}\). Phase 7;
+  derived from foundation rules over the flatten bijection.
+\end{theorem}
 
-\begin{axiom}[ReLU Jacobian]
+\begin{axiom}[ReLU Jacobian (guarded subgradient)]
   \label{ax:pdiv_relu}
   \lean{Proofs.pdiv_relu}
   \leanok
   \uses{ax:pdiv}
+  Pdiv of \(\mathrm{ReLU}\) at smooth points (\(\forall k,\ x_k \neq 0\)).
+  Guarded with the smoothness hypothesis after the foundation flip:
+  the unguarded form is provably inconsistent with \(\fderiv\)'s
+  junk-default at non-smooth multi-D points.
 \end{axiom}
 
 \begin{axiom}[Softmax cross-entropy gradient]
@@ -863,12 +873,26 @@ The workhorse: \(y = Wx + b\) plus ReLU and softmax cross-entropy loss.
   \(db = dy\). Phase 7: derived, no new axiom.
 \end{theorem}
 
-\begin{theorem}[ReLU VJP]
+\begin{axiom}[ReLU VJP]
   \label{thm:relu_has_vjp}
   \lean{Proofs.relu_has_vjp}
   \leanok
   \uses{ax:pdiv_relu}
-\end{theorem}
+  Axiomatized after the foundation flip: with guarded \texttt{pdiv\_relu},
+  the existence of a backward at non-smooth points becomes a convention
+  (the standard ML subgradient routing) rather than a theorem.
+\end{axiom}
+
+\begin{axiom}[MLP composition VJP]
+  \label{ax:mlp_has_vjp}
+  \lean{Proofs.mlp_has_vjp}
+  \leanok
+  \uses{thm:dense_has_vjp, thm:relu_has_vjp}
+  Axiomatized: the chain composes through ReLU which is non-differentiable
+  at the kink, so \(\vjp{\circ}\) (which now requires \(\Differentiable\)
+  evidence) cannot mechanically compose this. Subgradient routing is the
+  source of axiomaticness.
+\end{axiom}
 
 \section{Example: MNIST MLP}
 \label{sec:mlp_mnist_example}
@@ -1258,13 +1282,14 @@ infrastructure code.
 \chapter{CNN: Convolution and Pooling}
 \label{chap:cnn}
 
-\begin{axiom}[Conv2d forward]
+\begin{definition}[Conv2d forward]
   \label{ax:conv2d}
   \lean{Proofs.conv2d}
   \leanok
-  Opaque function declaration. Codegen provides the actual
-  \texttt{stablehlo.convolution}; proofs reason about it as a black box.
-\end{axiom}
+  Concrete \(\sum_{c,kh,kw}\) cross-correlation with SAME padding (Phase 7).
+  Codegen emits \texttt{stablehlo.convolution}; proofs reason about it
+  via the explicit definition.
+\end{definition}
 
 \begin{axiom}[Conv2d input VJP]
   \label{ax:conv2d_has_vjp3}
@@ -1274,27 +1299,30 @@ infrastructure code.
   Reversed-kernel convolution formula, numerically gradient-checked.
 \end{axiom}
 
-\begin{axiom}[Conv2d weight VJP]
+\begin{theorem}[Conv2d weight VJP]
   \label{ax:conv2d_weight_grad_has_vjp}
   \lean{Proofs.conv2d_weight_grad_has_vjp}
   \leanok
-  \uses{ax:conv2d}
+  \uses{ax:conv2d, ax:pdiv_add, ax:pdiv_mul, ax:pdiv_finset_sum, ax:pdiv_reindex}
   Phase 7: the transpose-trick formula via \texttt{Kernel4.flatten}.
-\end{axiom}
+  Derived from foundation rules.
+\end{theorem}
 
-\begin{axiom}[Conv2d bias VJP]
+\begin{theorem}[Conv2d bias VJP]
   \label{ax:conv2d_bias_grad_has_vjp}
   \lean{Proofs.conv2d_bias_grad_has_vjp}
   \leanok
-  \uses{ax:conv2d}
+  \uses{ax:conv2d, ax:pdiv_add, ax:pdiv_const, ax:pdiv_reindex}
   Phase 9: sum cotangent over spatial dims per channel.
-\end{axiom}
+  Derived from foundation rules.
+\end{theorem}
 
-\begin{axiom}[MaxPool 2x2 stride 2 forward]
+\begin{definition}[MaxPool 2x2 stride 2 forward]
   \label{ax:maxPool2}
   \lean{Proofs.maxPool2}
   \leanok
-\end{axiom}
+  Concrete four-way max over 2x2 windows (Phase 7).
+\end{definition}
 
 \begin{axiom}[MaxPool input VJP]
   \label{ax:maxPool2_has_vjp3}
@@ -1482,27 +1510,42 @@ plain \texttt{.conv2d} used here keeps the StableHLO much tighter.
 \chapter{BatchNorm: the hard one}
 \label{chap:bn}
 
-\begin{axiom}[BN affine step Jacobian]
+\begin{theorem}[BN affine step Jacobian]
   \label{ax:pdiv_bnAffine}
   \lean{Proofs.pdiv_bnAffine}
   \leanok
-  \uses{ax:pdiv}
+  \uses{ax:pdiv, ax:pdiv_add, ax:pdiv_mul, ax:pdiv_const, ax:pdiv_id}
   \(\partial (\gamma v + \beta) / \partial v_i = \gamma \delta_{ij}\).
-\end{axiom}
+  Derived from foundation rules.
+\end{theorem}
 
-\begin{axiom}[BN centering Jacobian]
+\begin{theorem}[BN centering Jacobian]
   \label{ax:pdiv_bnCentered}
   \lean{Proofs.pdiv_bnCentered}
   \leanok
-  \uses{ax:pdiv}
+  \uses{ax:pdiv, ax:pdiv_add, ax:pdiv_mul, ax:pdiv_const, ax:pdiv_id, ax:pdiv_finset_sum, ax:pdiv_reindex}
   \(\partial (x_j - \mu) / \partial x_i = \delta_{ij} - 1/n\).
-\end{axiom}
+  Derived from foundation rules.
+\end{theorem}
 
 \begin{axiom}[BN inverse-stddev broadcast Jacobian]
   \label{ax:pdiv_bnIstdBroadcast}
   \lean{Proofs.pdiv_bnIstdBroadcast}
   \leanok
   \uses{ax:pdiv}
+  \(\partial \mathrm{istd} / \partial x_i\). The Mathlib derivation via
+  \(\mathrm{Real.sqrt}\) and \(\mathrm{Inv.inv}\) is morally there but
+  not yet formalized; axiomatized.
+\end{axiom}
+
+\begin{axiom}[BN inverse-stddev broadcast smoothness]
+  \label{ax:bnIstdBroadcast_diff}
+  \lean{Proofs.bnIstdBroadcast_diff}
+  \leanok
+  \(\bnIstdBroadcast\) is \(\Differentiable\) when \(\varepsilon > 0\).
+  Captures the sqrt/recip smoothness of \(1/\sqrt{\sigma^2 + \varepsilon}\)
+  required by \(\pdiv\_\!\!\mathrm{mul}\) inside \texttt{pdiv\_bnNormalize}.
+  Same morally-provable cluster as \texttt{pdiv\_bnIstdBroadcast}.
 \end{axiom}
 
 \begin{theorem}[BN normalize 3-term VJP]
@@ -1955,11 +1998,12 @@ the leave-one-out chain.
 \chapter{Depthwise Convolution}
 \label{chap:depthwise}
 
-\begin{axiom}[Depthwise conv forward]
+\begin{definition}[Depthwise conv forward]
   \label{ax:depthwiseConv2d}
   \lean{Proofs.depthwiseConv2d}
   \leanok
-\end{axiom}
+  Concrete per-channel cross-correlation (Phase 7).
+\end{definition}
 
 \begin{axiom}[Depthwise input VJP]
   \label{ax:depthwise_has_vjp3}
@@ -1968,22 +2012,22 @@ the leave-one-out chain.
   \uses{ax:depthwiseConv2d}
 \end{axiom}
 
-\begin{axiom}[Depthwise weight VJP]
+\begin{theorem}[Depthwise weight VJP]
   \label{ax:depthwise_weight_grad_has_vjp3}
   \lean{Proofs.depthwise_weight_grad_has_vjp3}
   \leanok
-  \uses{ax:depthwiseConv2d}
+  \uses{ax:depthwiseConv2d, ax:pdiv_add, ax:pdiv_mul, ax:pdiv_finset_sum, ax:pdiv_reindex}
   Phase 7: reuses \(\HasVJPthree\) directly since \texttt{DepthwiseKernel}
-  is definitionally \(\mathsf{Tensor3}\).
-\end{axiom}
+  is definitionally \(\mathsf{Tensor3}\). Derived from foundation rules.
+\end{theorem}
 
-\begin{axiom}[Depthwise bias VJP]
+\begin{theorem}[Depthwise bias VJP]
   \label{ax:depthwise_bias_grad_has_vjp}
   \lean{Proofs.depthwise_bias_grad_has_vjp}
   \leanok
-  \uses{ax:depthwiseConv2d}
-  Phase 9.
-\end{axiom}
+  \uses{ax:depthwiseConv2d, ax:pdiv_add, ax:pdiv_const, ax:pdiv_reindex}
+  Phase 9. Derived from foundation rules.
+\end{theorem}
 
 \section{Example: MobileNet V2 on Imagenette}
 \label{sec:depthwise_mnv2_example}
@@ -2302,17 +2346,19 @@ at this scale.
 \chapter{LayerNorm and GELU}
 \label{chap:layernorm}
 
-\begin{axiom}[GELU scalar function]
+\begin{definition}[GELU scalar function]
   \label{ax:geluScalar}
   \lean{Proofs.geluScalar}
   \leanok
-\end{axiom}
+  Concrete \(0.5x(1 + \mathrm{erf}(x/\sqrt 2))\).
+\end{definition}
 
-\begin{axiom}[GELU scalar derivative]
+\begin{definition}[GELU scalar derivative]
   \label{ax:geluScalarDeriv}
   \lean{Proofs.geluScalarDeriv}
   \leanok
-\end{axiom}
+  Closed form for \(\mathrm{geluScalar}'\).
+\end{definition}
 
 \begin{axiom}[GELU Jacobian]
   \label{ax:pdiv_gelu}
@@ -2435,51 +2481,71 @@ Chapter~\ref{chap:attention} uses both to define ViT.
   \uses{thm:rowwise_has_vjp_mat, thm:gelu_has_vjp}
 \end{theorem}
 
-\begin{theorem}[Transformer MLP sublayer VJP]
+\begin{axiom}[Row-wise softmax smoothness]
+  \label{ax:rowSoftmax_flat_diff}
+  \lean{Proofs.rowSoftmax_flat_diff}
+  \leanok
+  Smoothness of \(\mathrm{rowSoftmax}\) (the flattened form): the
+  denominator \(\sum_j \exp(M_{rj})\) is positive, so the function is
+  C\(^\infty\) via Mathlib's \(\mathrm{Real.exp}\) calculus. Formal
+  derivation deferred — axiomatized so \(\vjpMat\_\!\!\mathrm{comp}\)
+  can compose through it.
+\end{axiom}
+
+\begin{axiom}[Transformer MLP sublayer VJP]
   \label{thm:transformerMlp_has_vjp_mat}
   \lean{Proofs.transformerMlp_has_vjp_mat}
   \leanok
-  \uses{thm:dense_per_token_has_vjp_mat, thm:gelu_per_token_has_vjp_mat, thm:vjpMat_comp}
-\end{theorem}
+  \uses{thm:dense_per_token_has_vjp_mat, thm:gelu_per_token_has_vjp_mat}
+  Was a \texttt{vjpMat\_comp} chain of three per-token liftings.
+  Axiomatized after the foundation flip — each \texttt{vjpMat\_comp}
+  now requires \(\Differentiable\) evidence and threading those through
+  the chain is deferred. Morally proven.
+\end{axiom}
 
-\begin{theorem}[Transformer attention sublayer with residual VJP]
+\begin{axiom}[Transformer attention sublayer with residual VJP]
   \label{thm:transformerAttnSublayer_has_vjp_mat}
   \lean{Proofs.transformerAttnSublayer_has_vjp_mat}
   \leanok
-  \uses{thm:biPathMat_has_vjp, thm:identityMat_has_vjp, thm:layerNorm_per_token_has_vjp_mat, ax:mhsa_has_vjp_mat, thm:vjpMat_comp}
-\end{theorem}
+  \uses{thm:layerNorm_per_token_has_vjp_mat, ax:mhsa_has_vjp_mat}
+  Was \(\biPathMat\) of identity and \(\mathrm{mhsa} \circ \mathrm{LN_1}\).
+  Axiomatized for the same reason as \texttt{transformerMlp\_has\_vjp\_mat}.
+\end{axiom}
 
-\begin{theorem}[Transformer MLP sublayer with residual VJP]
+\begin{axiom}[Transformer MLP sublayer with residual VJP]
   \label{thm:transformerMlpSublayer_has_vjp_mat}
   \lean{Proofs.transformerMlpSublayer_has_vjp_mat}
   \leanok
-  \uses{thm:biPathMat_has_vjp, thm:identityMat_has_vjp, thm:layerNorm_per_token_has_vjp_mat, thm:transformerMlp_has_vjp_mat, thm:vjpMat_comp}
-\end{theorem}
+  \uses{thm:layerNorm_per_token_has_vjp_mat, thm:transformerMlp_has_vjp_mat}
+  Same axiomatization.
+\end{axiom}
 
-\begin{theorem}[Transformer block VJP]
+\begin{axiom}[Transformer block VJP]
   \label{thm:transformerBlock_has_vjp_mat}
   \lean{Proofs.transformerBlock_has_vjp_mat}
   \leanok
-  \uses{thm:transformerAttnSublayer_has_vjp_mat, thm:transformerMlpSublayer_has_vjp_mat, thm:vjpMat_comp}
-  One \texttt{vjpMat\_comp} glueing the two sublayers.
-\end{theorem}
+  \uses{thm:transformerAttnSublayer_has_vjp_mat, thm:transformerMlpSublayer_has_vjp_mat}
+  Was one \texttt{vjpMat\_comp} glueing the two sublayers. Axiomatized.
+\end{axiom}
 
-\begin{theorem}[Transformer tower, any depth via induction]
+\begin{axiom}[Transformer tower, any depth]
   \label{thm:transformerTower_has_vjp_mat}
   \lean{Proofs.transformerTower_has_vjp_mat}
   \leanok
-  \uses{thm:transformerBlock_has_vjp_mat, thm:identityMat_has_vjp, thm:vjpMat_comp}
-  Covers ViT-Tiny (12 blocks), ViT-Base (12), ViT-Large (24).
-\end{theorem}
+  \uses{thm:transformerBlock_has_vjp_mat}
+  Was \(k\)-fold induction via \texttt{vjpMat\_comp}. Axiomatized;
+  covers ViT-Tiny / Base / Large.
+\end{axiom}
 
-\begin{theorem}[ViT body: the grand finale]
+\begin{axiom}[ViT body: the grand finale]
   \label{thm:vit_body_has_vjp_mat}
   \lean{Proofs.vit_body_has_vjp_mat}
   \leanok
-  \uses{thm:transformerTower_has_vjp_mat, thm:layerNorm_per_token_has_vjp_mat, thm:vjpMat_comp}
-  The full ViT transformer backbone as one \(\HasVJPMat\), derived from
-  exactly one new axiom (\texttt{mhsa\_has\_vjp\_mat}).
-\end{theorem}
+  \uses{thm:transformerTower_has_vjp_mat, thm:layerNorm_per_token_has_vjp_mat}
+  The full ViT transformer backbone as one \(\HasVJPMat\). Was
+  \(\mathrm{finalLN} \circ \mathrm{transformerTower}\) glued by
+  \texttt{vjpMat\_comp}; axiomatized after the foundation flip.
+\end{axiom}
 
 \section{Example: ViT-Tiny on Imagenette}
 \label{sec:attention_vit_example}
