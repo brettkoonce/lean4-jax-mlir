@@ -192,9 +192,11 @@ lake build resnet34-train
 ```
 
 This compiles the Lean trainer (which generates MLIR + drives IREE + runs
-the training loop). Other targets: `mobilenet-v2-train`, `mobilenet-v3-train`,
+the training loop). Other targets, in roughly book order:
+`mnist-mlp-train`, `mnist-cnn-train`, `cifar-cnn-train`, `cifar-bn-train`,
+`resnet50-train`, `mobilenet-v2-train`, `mobilenet-v3-train`,
 `mobilenet-v4-train`, `efficientnet-train`, `efficientnet-v2-train`,
-`vit-tiny-train`, `vgg-train`, `resnet50-train`.
+`vgg-train`, `vit-tiny-train`.
 
 ### 5. Run
 

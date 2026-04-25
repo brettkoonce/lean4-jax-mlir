@@ -4223,11 +4223,13 @@ curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
 lake build resnet34-train
 \end{verbatim}
 
-    Other available targets: \texttt{mobilenet-v2-train},
+    Other available targets, in roughly book order:
+    \texttt{mnist-mlp-train}, \texttt{mnist-cnn-train},
+    \texttt{cifar-cnn-train}, \texttt{cifar-bn-train},
+    \texttt{resnet50-train}, \texttt{mobilenet-v2-train},
     \texttt{mobilenet-v3-train}, \texttt{mobilenet-v4-train},
     \texttt{efficientnet-train}, \texttt{efficientnet-v2-train},
-    \texttt{vit-tiny-train}, \texttt{vgg-train},
-    \texttt{resnet50-train}.
+    \texttt{vgg-train}, \texttt{vit-tiny-train}.
 
   \item \textbf{Run, setting the backend env vars.} The FFI picks
     up \texttt{IREE\_BACKEND} and \texttt{IREE\_CHIP} at runtime.
@@ -4266,10 +4268,11 @@ reuse the cached vmfb under \texttt{.lake/build/} unless you
 delete it. The first-compile is a one-time cost per architecture,
 per GPU target.
 
-\textbf{Shell wrappers.} The repo ships \texttt{run\_*.sh} scripts
-that set the right env vars for common configurations
-(\texttt{run\_effnet.sh}, \texttt{run\_resnet.sh}, etc.). These are
-the smallest correct invocations to copy from.
+\textbf{Shell wrapper.} The repo ships \texttt{run.sh} which sets
+the right env vars and tees output to a log file. Usage:
+\texttt{./run.sh <trainer> [gpu] [backend]} (e.g.\
+\texttt{./run.sh resnet34}; \texttt{./run.sh efficientnet-v2 1
+cuda}).
 
 \section*{Track 3: Proofs only (no IREE needed)}
 
