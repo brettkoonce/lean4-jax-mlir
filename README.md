@@ -14,7 +14,7 @@ in Lean.
 Companion code for the upcoming book *Verified Deep Learning with Lean4*
 (follow-up to [Convolutional Neural Networks with Swift for TensorFlow](https://doi.org/10.1007/978-1-4842-6168-2), Apress).
 
-**Current version: `v0.5.2`** — first cross-backend-verified release. MNIST
+**Current version: `v0.5.3`** — first cross-backend-verified release. MNIST
 MLP *and* CNN training traces agree at the **float32 ULP floor**
 between two independent compilation pipelines (Lean→IREE→GPU vs
 Lean→JAX→XLA) on both NVIDIA and AMD hardware. See
@@ -384,7 +384,7 @@ ROCm 7.2.0 / gfx1100.
   author  = {Brett Koonce and Claude Code},
   title   = {Verified Deep Learning with Lean4: Formal Backpropagation from MLP to Attention, via MLIR},
   url     = {https://github.com/brettkoonce/lean4-mlir},
-  version = {0.5.2},
+  version = {0.5.3},
   year    = {2026},
 }
 ```
