@@ -64,9 +64,19 @@ abbrev DepthwiseKernel (c kH kW : Nat) := Fin c → Fin kH → Fin kW → ℝ
     MLIR (`MlirCodegen.lean` `emitDepthwiseConvBn`):
       uses `feature_group_count = c` to tell StableHLO that each kernel
       applies only within its own channel group. -/
-axiom depthwiseConv2d {c h w kH kW : Nat}
+noncomputable def depthwiseConv2d {c h w kH kW : Nat}
     (W : DepthwiseKernel c kH kW) (b : Vec c)
-    (x : Tensor3 c h w) : Tensor3 c h w
+    (x : Tensor3 c h w) : Tensor3 c h w :=
+  fun ch hi wi =>
+    b ch + ∑ kh : Fin kH, ∑ kw : Fin kW,
+      W ch kh kw *
+        (let pH := (kH - 1) / 2
+         let pW := (kW - 1) / 2
+         let hh := kh.val + hi.val
+         let ww := kw.val + wi.val
+         if hpad : pH ≤ hh ∧ hh - pH < h ∧ pW ≤ ww ∧ ww - pW < w then
+           x ch ⟨hh - pH, hpad.2.1⟩ ⟨ww - pW, hpad.2.2.2⟩
+         else 0)
 
 -- ════════════════════════════════════════════════════════════════
 -- § Backward — three pieces, each per-channel
