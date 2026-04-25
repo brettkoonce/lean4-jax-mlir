@@ -820,6 +820,25 @@ theorem pdivFDMat_matmul_right_const {m p q : Nat} (A : Mat m p) (D : Mat p q)
       fun s => ⟨fun h => hik h.2, False.elim⟩]
     simp
 
+/-- **Row-independent Jacobian for `pdivFDMat`** — `∂(g(M_·))_{kl}/∂M_{ij}
+    = δ_{ik}·∂g_l/∂x_j(M_i)`. The pdiv-side `pdivMat_rowIndep` is an axiom;
+    this parallel statement could be proven from `fderiv_pi` + chain rule
+    via the row-extraction CLM, but the proof is substantial. Sketch:
+
+      `flat_fn v idx = g (row_{r_idx} v) (c_idx)` where
+      `row_r v = (reindexCLM (fun s ↦ fPF (r, s))) v`. Apply
+      `fderiv_pi` to project to coord `fPF (k, l)`; rewrite as
+      `proj_l ∘ g ∘ reindexCLM σ_k`; chain rule. Then
+      `reindexCLM σ_k (basisVec (fPF (i, j)))` is `basisVec j` when
+      `i = k` and `0` otherwise (case analysis on `fPF` injectivity).
+
+    Kept as an axiom here for now to keep the parallel-track aligned
+    with the pdiv side. Marked TODO for the atomic-flip session. -/
+axiom pdivFDMat_rowIndep {m n p : Nat} (g : Vec n → Vec p)
+    (A : Mat m n) (i : Fin m) (j : Fin n) (k : Fin m) (l : Fin p) :
+    pdivFDMat (fun M : Mat m n => fun r => g (M r)) A i j k l =
+    if i = k then pdivFD g (A i) j l else 0
+
 /-- **Scalar-scale Jacobian for `pdivFDMat`** — `∂(s·M)_{kl}/∂M_{ij} =
     s·δ_{ik,jl}`. Proved from `pdivFD_mul_of_diff` (const × id factors)
     + `pdivFD_const` + `pdivFD_id`. Mirrors `pdivMat_scalarScale`. -/
