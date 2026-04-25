@@ -97,9 +97,10 @@ noncomputable def seBlock {n : Nat} (gate : Vec n → Vec n) : Vec n → Vec n :
     **No sorry** — this delegates to `elemwiseProduct_has_vjp` and
     `identity_has_vjp`, both proved in `Tensor.lean`. -/
 noncomputable def seBlock_has_vjp {n : Nat}
-    (gate : Vec n → Vec n) (hg : HasVJP gate) :
+    (gate : Vec n → Vec n) (hg_diff : Differentiable ℝ gate) (hg : HasVJP gate) :
     HasVJP (seBlock gate) :=
-  elemwiseProduct_has_vjp (fun x => x) gate (identity_has_vjp n) hg
+  elemwiseProduct_has_vjp (fun x => x) gate
+    differentiable_id hg_diff (identity_has_vjp n) hg
 
 -- ════════════════════════════════════════════════════════════════
 -- § Sketching the concrete SE gate

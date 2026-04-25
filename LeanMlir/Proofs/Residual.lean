@@ -60,9 +60,9 @@ noncomputable def residual {n : Nat} (f : Vec n → Vec n) : Vec n → Vec n :=
     Proof: immediate from `biPath_has_vjp` and `identity_has_vjp`,
     both proved in `Tensor.lean`. -/
 noncomputable def residual_has_vjp {n : Nat}
-    (f : Vec n → Vec n) (hf : HasVJP f) :
+    (f : Vec n → Vec n) (hf_diff : Differentiable ℝ f) (hf : HasVJP f) :
     HasVJP (residual f) :=
-  biPath_has_vjp f (fun x => x) hf (identity_has_vjp n)
+  biPath_has_vjp f (fun x => x) hf_diff differentiable_id hf (identity_has_vjp n)
 
 -- ════════════════════════════════════════════════════════════════
 -- § Projected residual: y = proj(x) + f(x)
@@ -91,9 +91,11 @@ noncomputable def residualProj {m n : Nat}
 
     Proof: immediate from `biPath_has_vjp`, proved in `Tensor.lean`. -/
 noncomputable def residualProj_has_vjp {m n : Nat}
-    (proj f : Vec m → Vec n) (hproj : HasVJP proj) (hf : HasVJP f) :
+    (proj f : Vec m → Vec n)
+    (hproj_diff : Differentiable ℝ proj) (hf_diff : Differentiable ℝ f)
+    (hproj : HasVJP proj) (hf : HasVJP f) :
     HasVJP (residualProj proj f) :=
-  biPath_has_vjp proj f hproj hf
+  biPath_has_vjp proj f hproj_diff hf_diff hproj hf
 
 -- ════════════════════════════════════════════════════════════════
 -- § The pattern, in plain English

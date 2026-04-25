@@ -80,11 +80,11 @@ noncomputable def layerNormForward (n : Nat) (ε : ℝ) (γ β : ℝ)
     If you built `layerNorm_has_vjp` you'd discover it's `bn_has_vjp`
     with the exact same proof. Rather than restate, we just reuse:
 -/
-noncomputable def layerNorm_has_vjp (n : Nat) (ε γ β : ℝ) :
+noncomputable def layerNorm_has_vjp (n : Nat) (ε γ β : ℝ) (hε : 0 < ε) :
     HasVJP (layerNormForward n ε γ β) := by
   -- layerNormForward is definitionally bnForward, so the BN VJP works as-is.
   show HasVJP (bnForward n ε γ β)
-  exact bn_has_vjp n ε γ β
+  exact bn_has_vjp n ε γ β hε
 
 /-! ## Why this isn't a new chapter
 
