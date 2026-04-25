@@ -613,6 +613,111 @@ theorem pdivFDMat_comp_of_diff {a b c d e f : Nat}
         rw [Equiv.apply_symm_apply])]
   rw [Fintype.sum_prod_type]
 
+/-- **Matmul Jacobian (left-const) for `pdivFDMat`** — proved from
+    `pdivFD_finset_sum` + `pdivFD_mul_of_diff` + `pdivFD_const` +
+    `pdivFD_reindex`. Each summand factors as `(idx-dependent constant)
+    × (reindex)`, both differentiable, so all diff hypotheses discharge
+    inline. Mirrors `pdivMat_matmul_left_const`. -/
+theorem pdivFDMat_matmul_left_const {m p q : Nat} (C : Mat m p) (B : Mat p q)
+    (i : Fin p) (j : Fin q) (k : Fin m) (l : Fin q) :
+    pdivFDMat (fun B' : Mat p q => Mat.mul C B') B i j k l =
+    if l = j then C k i else 0 := by
+  unfold pdivFDMat
+  have h_reduces :
+      (fun v : Vec (p * q) =>
+        Mat.flatten ((fun B' : Mat p q => Mat.mul C B') (Mat.unflatten v))) =
+      (fun v : Vec (p * q) => fun idx : Fin (m * q) =>
+        ∑ s : Fin p,
+          C (finProdFinEquiv.symm idx).1 s *
+          v (finProdFinEquiv (s, (finProdFinEquiv.symm idx).2))) := by
+    funext v idx
+    show Mat.mul C (Mat.unflatten v)
+           (finProdFinEquiv.symm idx).1 (finProdFinEquiv.symm idx).2 = _
+    unfold Mat.mul Mat.unflatten
+    rfl
+  rw [h_reduces]
+  -- Each summand is `const · reindex`, both differentiable.
+  have h_term_diff : ∀ s : Fin p, DifferentiableAt ℝ
+      (fun v : Vec (p * q) => fun idx : Fin (m * q) =>
+          C (finProdFinEquiv.symm idx).1 s *
+          v (finProdFinEquiv (s, (finProdFinEquiv.symm idx).2)))
+      (Mat.flatten B) := by
+    intro s
+    have h_const : DifferentiableAt ℝ
+        (fun _ : Vec (p * q) => fun idx : Fin (m * q) =>
+          C (finProdFinEquiv.symm idx).1 s) (Mat.flatten B) :=
+      differentiableAt_const _
+    have h_reindex : DifferentiableAt ℝ
+        (fun v : Vec (p * q) => fun idx : Fin (m * q) =>
+          v (finProdFinEquiv (s, (finProdFinEquiv.symm idx).2))) (Mat.flatten B) :=
+      (reindexCLM (fun idx : Fin (m * q) =>
+          finProdFinEquiv (s, (finProdFinEquiv.symm idx).2))).differentiableAt
+    show DifferentiableAt ℝ
+        ((fun _ : Vec (p * q) => fun idx : Fin (m * q) =>
+            C (finProdFinEquiv.symm idx).1 s) *
+         (fun v : Vec (p * q) => fun idx : Fin (m * q) =>
+            v (finProdFinEquiv (s, (finProdFinEquiv.symm idx).2)))) (Mat.flatten B)
+    exact h_const.mul h_reindex
+  rw [pdivFD_finset_sum _ _ _ (fun s _ => h_term_diff s)]
+  have hterm : ∀ s : Fin p,
+      pdivFD (fun v : Vec (p * q) => fun idx : Fin (m * q) =>
+              C (finProdFinEquiv.symm idx).1 s *
+              v (finProdFinEquiv (s, (finProdFinEquiv.symm idx).2)))
+           (Mat.flatten B) (finProdFinEquiv (i, j)) (finProdFinEquiv (k, l)) =
+      C k s * (if finProdFinEquiv (i, j) = finProdFinEquiv (s, l) then 1 else 0) := by
+    intro s
+    have h_prod :
+        (fun v : Vec (p * q) => fun idx : Fin (m * q) =>
+          C (finProdFinEquiv.symm idx).1 s *
+          v (finProdFinEquiv (s, (finProdFinEquiv.symm idx).2))) =
+        (fun v idx =>
+          (fun (_ : Vec (p * q)) (idx' : Fin (m * q)) =>
+            C (finProdFinEquiv.symm idx').1 s) v idx *
+          (fun (w : Vec (p * q)) (idx' : Fin (m * q)) =>
+            w (finProdFinEquiv (s, (finProdFinEquiv.symm idx').2))) v idx) := rfl
+    have h_const_diff : DifferentiableAt ℝ
+        (fun (_ : Vec (p * q)) (idx' : Fin (m * q)) =>
+          C (finProdFinEquiv.symm idx').1 s) (Mat.flatten B) :=
+      differentiableAt_const _
+    have h_reindex_diff : DifferentiableAt ℝ
+        (fun (w : Vec (p * q)) (idx' : Fin (m * q)) =>
+          w (finProdFinEquiv (s, (finProdFinEquiv.symm idx').2))) (Mat.flatten B) :=
+      (reindexCLM (fun idx' : Fin (m * q) =>
+          finProdFinEquiv (s, (finProdFinEquiv.symm idx').2))).differentiableAt
+    rw [h_prod, pdivFD_mul_of_diff _ _ _ h_const_diff h_reindex_diff]
+    rw [show pdivFD (fun _ : Vec (p * q) => fun idx' : Fin (m * q) =>
+              C (finProdFinEquiv.symm idx').1 s)
+            (Mat.flatten B) (finProdFinEquiv (i, j)) (finProdFinEquiv (k, l)) = 0
+        from pdivFD_const _ _ _ _]
+    rw [pdivFD_reindex (fun idx' => finProdFinEquiv (s, (finProdFinEquiv.symm idx').2))]
+    simp only [Equiv.symm_apply_apply]
+    ring
+  simp_rw [hterm]
+  have hkey : ∀ s : Fin p,
+      C k s * (if finProdFinEquiv (i, j) = finProdFinEquiv (s, l) then (1:ℝ) else 0) =
+      if s = i ∧ l = j then C k s else 0 := by
+    intro s
+    by_cases hs : s = i ∧ l = j
+    · obtain ⟨hsi, hlj⟩ := hs
+      subst hsi; subst hlj; simp
+    · have hne : finProdFinEquiv (i, j) ≠ finProdFinEquiv (s, l) := by
+        intro heq
+        apply hs
+        have := finProdFinEquiv.injective heq
+        exact ⟨(Prod.mk.inj this).1.symm, (Prod.mk.inj this).2.symm⟩
+      rw [if_neg hne]; simp [hs]
+  simp_rw [hkey]
+  by_cases hlj : l = j
+  · rw [if_pos hlj]
+    simp_rw [show ∀ s : Fin p, (s = i ∧ l = j) ↔ (s = i) from
+      fun s => ⟨And.left, fun h => ⟨h, hlj⟩⟩]
+    rw [Finset.sum_ite_eq' Finset.univ i (fun s => C k s)]
+    simp
+  · rw [if_neg hlj]
+    simp_rw [show ∀ s : Fin p, (s = i ∧ l = j) ↔ False from
+      fun s => ⟨fun h => hlj h.2, False.elim⟩]
+    simp
+
 /-- **Sum rule for `pdivFDMat`** — proved from `pdivFD_add_of_diff` via
     the flatten bijection. Requires both `F` and `G` (in their flattened
     forms) to be differentiable at `flatten A`. Mirrors `pdivMat_add`. -/
