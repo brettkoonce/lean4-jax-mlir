@@ -96,19 +96,6 @@ lemma dense_per_token_flat_diff {N inD outD : Nat}
                    (Mat.unflatten v))) := by
   unfold Mat.unflatten Mat.flatten dense; fun_prop
 
-/-- **Real.tanh is differentiable everywhere** — bridged via
-    `Real.tanh_eq_sinh_div_cosh` and `Real.cosh_pos`. Tagged for
-    `fun_prop` so downstream gelu-style smoothness goals dispatch. -/
-@[fun_prop]
-theorem Real.differentiable_tanh : Differentiable ℝ Real.tanh := by
-  have h_eq : Real.tanh = (fun x : ℝ => Real.sinh x / Real.cosh x) :=
-    funext Real.tanh_eq_sinh_div_cosh
-  rw [h_eq]
-  intro x
-  exact (Real.differentiable_sinh.differentiableAt).div
-          Real.differentiable_cosh.differentiableAt
-          (Real.cosh_pos x).ne'
-
 /-- Differentiability of the flattened per-token GELU map.
     `geluScalar = 0.5 · x · (1 + tanh(√(2/π)(x + 0.044715·x³)))`. With
     `Real.differentiable_tanh` available to `fun_prop`, the proof
@@ -123,12 +110,6 @@ theorem gelu_per_token_flat_diff (N D : Nat) :
 lemma dense_diff {m n : Nat} (W : Mat m n) (b : Vec n) :
     Differentiable ℝ (dense W b) := by
   unfold dense; fun_prop
-
-/-- Differentiability of `gelu D` as a function on `Vec D`.
-    Now provable via `fun_prop` since `Real.differentiable_tanh` is
-    tagged. -/
-lemma gelu_diff (D : Nat) : Differentiable ℝ (gelu D) := by
-  unfold gelu geluScalar; fun_prop
 
 /-- Differentiability of `softmax c` — same recipe as `rowSoftmax_flat_diff`,
     but on the unflattened vector. -/

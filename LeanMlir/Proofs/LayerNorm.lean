@@ -2,8 +2,12 @@ import LeanMlir.Proofs.Tensor
 import LeanMlir.Proofs.BatchNorm
 import Mathlib.Analysis.SpecialFunctions.ExpDeriv
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
+import Mathlib.Analysis.SpecialFunctions.Trigonometric.DerivHyp
+import Mathlib.Analysis.Complex.Trigonometric
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
 import Mathlib.Analysis.Calculus.Deriv.Basic
+import Mathlib.Analysis.Calculus.Deriv.Inv
+import Mathlib.Analysis.Calculus.FDeriv.Prod
 
 /-!
 # LayerNorm & GELU
@@ -137,9 +141,71 @@ noncomputable def gelu (n : Nat) (x : Vec n) : Vec n :=
 noncomputable def geluScalarDeriv (x : ℝ) : ℝ :=
   deriv geluScalar x
 
-axiom pdiv_gelu (n : Nat) (x : Vec n) (i j : Fin n) :
+/-- **Real.tanh is differentiable everywhere** — bridge via
+    `Real.tanh_eq_sinh_div_cosh` and `Real.cosh_pos`. Tagged for
+    `fun_prop` so downstream gelu-style smoothness goals dispatch. -/
+@[fun_prop]
+theorem Real.differentiable_tanh : Differentiable ℝ Real.tanh := by
+  have h_eq : Real.tanh = (fun x : ℝ => Real.sinh x / Real.cosh x) :=
+    funext Real.tanh_eq_sinh_div_cosh
+  rw [h_eq]
+  intro x
+  exact (Real.differentiable_sinh.differentiableAt).div
+          Real.differentiable_cosh.differentiableAt
+          (Real.cosh_pos x).ne'
+
+/-- Differentiability of `geluScalar` as a scalar function. -/
+@[fun_prop]
+lemma geluScalar_diff : Differentiable ℝ geluScalar := by
+  unfold geluScalar; fun_prop
+
+/-- Differentiability of `gelu D` as a function on `Vec D`. -/
+lemma gelu_diff (D : Nat) : Differentiable ℝ (gelu D) := by
+  unfold gelu; fun_prop
+
+/-- **Partial derivative of GELU** — proved (VJP.md follow-up E).
+
+    `gelu n` has diagonal Jacobian: each output coord depends only on
+    the corresponding input coord via `geluScalar`. So
+    `∂(gelu n y)_j / ∂y_i = (geluScalar' (y i))` if `i = j`, else `0`.
+
+    Proof: `fderiv_apply` to extract output coord `j`, then chain rule
+    through `geluScalar ∘ proj_j`, then `fderiv_eq_smul_deriv` to
+    convert scalar `fderiv` back to `deriv`. -/
+theorem pdiv_gelu (n : Nat) (x : Vec n) (i j : Fin n) :
     pdiv (gelu n) x i j =
-    if i = j then geluScalarDeriv (x i) else 0
+    if i = j then geluScalarDeriv (x i) else 0 := by
+  unfold pdiv
+  -- Convert the (j-th coord of) fderiv (gelu n) to fderiv of the j-th coord function.
+  have h_swap : fderiv ℝ (gelu n) x (basisVec i) j =
+                fderiv ℝ (fun y : Vec n => gelu n y j) x (basisVec i) := by
+    rw [fderiv_apply ((gelu_diff n) x) j]
+    rfl
+  rw [h_swap]
+  -- The j-th coord function is `geluScalar ∘ proj_j`.
+  have h_decomp : (fun y : Vec n => gelu n y j) =
+                  geluScalar ∘ (ContinuousLinearMap.proj j : Vec n →L[ℝ] ℝ) := by
+    funext y; rfl
+  rw [h_decomp]
+  rw [fderiv_comp _ (geluScalar_diff _)
+        (ContinuousLinearMap.proj j : Vec n →L[ℝ] ℝ).differentiableAt]
+  rw [(ContinuousLinearMap.proj j : Vec n →L[ℝ] ℝ).fderiv]
+  -- Now goal: ((fderiv ℝ geluScalar (proj j x)).comp (proj j)) (basisVec i) = ...
+  simp only [ContinuousLinearMap.comp_apply, ContinuousLinearMap.proj_apply]
+  -- Goal: fderiv ℝ geluScalar (x j) (basisVec i j) = ...
+  rw [fderiv_eq_smul_deriv]
+  show basisVec i j • deriv geluScalar (x j) = if i = j then geluScalarDeriv (x i) else 0
+  -- basisVec i j = if j = i then 1 else 0; geluScalarDeriv = deriv geluScalar.
+  show basisVec i j * deriv geluScalar (x j) = _
+  by_cases hij : i = j
+  · subst hij
+    show basisVec i i * deriv geluScalar (x i) = if i = i then geluScalarDeriv (x i) else 0
+    simp only [basisVec_apply, if_pos rfl, one_mul]
+    rfl
+  · have h_basis : basisVec i j = 0 := by
+      simp only [basisVec_apply]
+      rw [if_neg]; intro heq; exact hij heq.symm
+    rw [h_basis, zero_mul, if_neg hij]
 
 /-- **GELU VJP**: elementwise multiply by the scalar derivative.
 
