@@ -222,11 +222,11 @@ These tripped the attempt and will trip the next one. Pre-mitigate.
 
 To minimize the rework risk:
 
-1. **Phase 1 (standalone, ~150 LOC):** land `pdivMat_colIndep` +
-   `colSlabApply` + `colSlabwise_has_vjp_mat` as a *single self-contained*
-   PR on its own branch. Tree-green, `#print axioms` shows pure-Mathlib
-   closure. This is reusable infrastructure — even if Phase 2 stalls,
-   this is good.
+1. **Phase 1 (standalone, ~265 LOC) — ✅ LANDED.** `pdivMat_colIndep` +
+   `colSlabApply` + `colSlabwise_has_vjp_mat` on branch
+   `colslab-vmap-framework` (commit `6259cae`). Pure-Mathlib closure on
+   all three. Doesn't change axiom counts; reusable foundation for
+   Phase 3.
 2. **Phase 2 (~150 LOC):** `HasVJPMat3` framework + `sdpa_has_vjp_mat3`.
    Standalone too: doesn't depend on Phase 1 directly (Phase 1 is the
    "vmap" half, Phase 2 is the "ternary" half).
@@ -244,14 +244,15 @@ codegen).
 
 ## Time budget
 
-- Phase 1: 4–6 hours (the encoding work is the main time sink; the
-  proof shape is clear from `pdivMat_rowIndep`).
+- ~~Phase 1: 4–6 hours~~ — actual: ~1 hour (much faster than estimated
+  once the pitfalls catalog was applied. The original failure was
+  tactic-ordering noise, not a fundamental difficulty).
 - Phase 2: 4–6 hours (`HasVJPMat3` is straightforward but verbose; the
   chain rule for ternary inputs needs care).
 - Phase 3: 6–8 hours (integration, joint diff plumbing, mhsa_layer
   composition).
 
-**Total: ~16 focused hours, ~3 working days.**
+**Remaining: ~10–14 focused hours, ~2 working days.**
 
 ---
 
