@@ -26,7 +26,7 @@ deferred" Jacobian: `pdivMat_rowIndep`, `pdiv_softmax`,
 inverse-stddev smoothness, the row-wise softmax smoothness, and all
 seven transformer-level composition chains.
 
-The progression: **30 → 10 axioms.** See `VJP.md` at the repo root
+The progression: **30 → 4 axioms.** See `VJP.md` at the repo root
 for the full elimination history.
 
 ## Dependency graph
@@ -60,14 +60,17 @@ Tensor.lean                    ← pdiv (def via fderiv) + VJP framework
   │
   ├── LayerNorm.lean           LayerNorm (proved) + GELU (gelu Jacobian proved)
   │
-  └── Attention.lean           softmax (proved) + SDPA (proved) + MHSA (bundled)
-                               + ViT body chains (proved) + patchEmbed (bundled)
+  └── Attention.lean           softmax (proved) + SDPA (proved) + MHSA (proved)
+                               + ViT body chains (proved) + patchEmbed (proved)
 ```
 
-## Axioms (10 total)
+## Axioms (4 total)
 
-The 10 surviving axioms are at genuine non-smoothness or
-bundled-codegen boundaries, not deferred proofs. Grouped by file:
+The 4 surviving axioms are at genuine non-smoothness boundaries
+(ReLU and MaxPool subgradient conventions), not deferred proofs.
+Going below 4 requires `HasVJP.correct` weakening to "smooth subset
+only" — a project-wide rewrite, separate multi-week effort.
+Grouped by file:
 
 **Tensor.lean** — calculus foundation: **0 axioms.** `pdiv` is a
 `noncomputable def` over `fderiv`; every structural rule is a
@@ -88,16 +91,17 @@ hypothesis on the per-row function.
 > foundation. `softmaxCE_grad` is also a theorem (relocated to
 > `Attention.lean` next to `pdiv_softmax`).
 
-**CNN.lean** — convolution and pooling: **2 axioms.**
+**CNN.lean** — convolution and pooling: **1 axiom.**
 | Axiom | What it says |
 |-------|-------------|
-| `conv2d_has_vjp3` | Conv2d input-VJP (padding boundary stays axiomatic) |
 | `maxPool2_has_vjp3` | MaxPool2 input-VJP (argmax routing convention) |
 
 > `conv2d` and `maxPool2` are now concrete `def`s. The
 > weight-grad and bias-grad VJPs (`conv2d_weight_grad_has_vjp`,
 > `conv2d_bias_grad_has_vjp`) are theorems proved from foundation
-> via `unfold + fun_prop`.
+> via `unfold + fun_prop`. `conv2d_has_vjp3` is now a theorem
+> (Phase 1, Apr 2026) — proved via `pdiv_finset_sum` × 3 +
+> `pdiv_const_mul_pi_pad_eval` per-summand + Σ_(c, kh, kw) collapse.
 
 **BatchNorm.lean** — the hard one: **0 axioms.**
 
@@ -112,13 +116,12 @@ hypothesis on the per-row function.
 **Residual.lean** — skip connections: **0 axioms.** Pure composition
 over `biPath_has_vjp` + `identity_has_vjp` from `Tensor.lean`.
 
-**Depthwise.lean** — depthwise conv: **1 axiom.**
-| Axiom | What it says |
-|-------|-------------|
-| `depthwise_has_vjp3` | Depthwise input-VJP (parallel to conv2d) |
+**Depthwise.lean** — depthwise conv: **0 axioms.**
 
-> Same recipe as CNN: `depthwiseConv2d` is now a concrete `def`,
-> weight and bias gradients are theorems via `unfold + fun_prop`.
+> `depthwiseConv2d` is now a concrete `def`, weight and bias
+> gradients are theorems via `unfold + fun_prop`. `depthwise_has_vjp3`
+> is now a theorem (Phase 2, Apr 2026) — same recipe as conv2d with
+> one fewer Σ level (no cross-channel mixing in depthwise).
 
 **SE.lean** — squeeze-and-excitation: **0 axioms.** Pure composition
 over `elemwiseProduct_has_vjp` + `dense_has_vjp` + `identity_has_vjp`.
@@ -135,13 +138,7 @@ over `elemwiseProduct_has_vjp` + `dense_has_vjp` + `identity_has_vjp`.
 > smoothness through. `layerNorm_has_vjp` reuses the BN proof
 > template on a different axis.
 
-**Attention.lean** — softmax, attention, ViT: **4 axioms.**
-| Axiom | What it says |
-|-------|-------------|
-| `mhsa_has_vjp_mat` | Multi-head SDPA bundled VJP |
-| `mhsa_layer_flat_diff` | `Differentiable` sibling of `mhsa_has_vjp_mat` |
-| `patchEmbed_flat_has_vjp` | Patch-embedding bundled VJP (opaque codegen) |
-| `patchEmbed_flat_diff` | `Differentiable` sibling |
+**Attention.lean** — softmax, attention, ViT: **0 axioms.**
 
 > `pdiv_softmax`, `softmaxCE_grad`, the three `sdpa_back_*_correct`
 > theorems, `rowSoftmax_flat_diff`, and **every** transformer-level
@@ -150,19 +147,22 @@ over `elemwiseProduct_has_vjp` + `dense_has_vjp` + `identity_has_vjp`.
 > `transformerMlpSublayer_has_vjp_mat`,
 > `transformerBlock_has_vjp_mat`,
 > `transformerTower_has_vjp_mat`, `vit_body_has_vjp_mat`,
+> `mhsa_has_vjp_mat`, `mhsa_layer_flat_diff`,
 > `classifier_flat_has_vjp`, `vit_full_has_vjp`) are theorems.
-> `mhsa_has_vjp_mat` and `patchEmbed_flat_has_vjp` stay axiomatic
-> because each requires a project-wide framework change to remove
-> (per-head reduction machinery / spatial-rearrangement lifting).
-> Each has a Diff sibling so downstream theorems can thread
-> `Differentiable` evidence through them.
+> `patchEmbed_flat`, `patchEmbed_flat_diff`, and
+> `patchEmbed_flat_has_vjp` were the last to fall: Phase 6a (Apr 2026)
+> de-opaqued the forward and proved Diff via `differentiableAt_pad_eval`;
+> Phase 6b (Apr 2026) proved the closed-form input-VJP via the same
+> recipe used for `conv2d_has_vjp3`/`depthwise_has_vjp3`, with one new
+> wrinkle: split `Σ n : Fin (N+1)` into the n=0 (CLS row, zero img-grad
+> contribution) and `Σ p : Fin N` (n = p.succ, conv projection).
 
 Plus three Lean core axioms (`propext`, `Classical.choice`,
 `Quot.sound`) present in every nontrivial Lean program.
 
-**Total: 0 (Tensor) + 3 (MLP) + 2 (CNN) + 0 (BatchNorm) + 0
-(Residual) + 1 (Depthwise) + 0 (SE) + 0 (LayerNorm) + 4 (Attention)
-= 10 axioms.**
+**Total: 0 (Tensor) + 3 (MLP) + 1 (CNN) + 0 (BatchNorm) + 0
+(Residual) + 0 (Depthwise) + 0 (SE) + 0 (LayerNorm) + 0 (Attention)
+= 4 axioms.**
 
 Five of nine content modules add zero new axioms.
 

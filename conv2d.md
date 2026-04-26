@@ -14,15 +14,25 @@ CNN.lean) generalized cleanly.
 ~110 LOC. De-opaqued `patchEmbed_flat` from `noncomputable opaque` to
 concrete `noncomputable def`; replaced `axiom patchEmbed_flat_diff`
 with a theorem proved via `fun_prop` + `differentiableAt_pad_eval`.
-The HasVJP axiom kept as a marker (now provable, but the closed-form
-proof is its own ~400-600 LOC effort — see **Phase 6b** below).
 
-**Phase 6b (patchEmbed HasVJP) status:** READY. The recipe and
-gotchas are documented below. Estimated: 1 focused session.
+**Phase 6b (patchEmbed HasVJP) status:** LANDED.
+~800 LOC including the closed-form input-grad formula and the full
+correctness proof. The proof uses the absorb-trick: pack the `n.val = 0`
+CLS-row case into the pad guard of `var_F`, so the chain rules
+(`pdiv_finset_sum` × 3 + `pdiv_const_mul_pi_pad_eval`) apply uniformly.
+The closing splits `Σ n : Fin (N+1)` via `Fin.sum_univ_succ` into the
+n=0 row (zero contribution) and `Σ p : Fin N` (n = p.succ), then per-p
+collapses Σ c on c=c_in, simplifies the indicator via injectivity of
+`finProdFinEquiv`, and reorders Σ d using two `Finset.sum_comm`
+applications to align with the formula's `∑ p kh kw, [if h_match then
+∑ d, ... else 0]` shape.
 
 Axiom count: 8 → 7 (Phase 1) → 6 (Phase 2) → 5 (Phase 6a) → 4 (Phase 6b).
 
-The 4 remaining after 6b are pure framework-convention axioms:
+`#print axioms vit_full_has_vjp` confirms pure-Mathlib closure: only
+`propext`, `Classical.choice`, `Quot.sound` (Lean core).
+
+The 4 remaining are pure framework-convention axioms:
 - 3 ReLU subgradient (`pdiv_relu`, `relu_has_vjp`, `mlp_has_vjp`)
 - 1 maxPool2 subgradient (`maxPool2_has_vjp3`)
 
