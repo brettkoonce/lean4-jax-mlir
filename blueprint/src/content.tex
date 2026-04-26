@@ -249,9 +249,10 @@ Let's find out.
 
 A VJP (vector-Jacobian product) is the backward function for a layer:
 takes an upstream gradient, returns the downstream one. Every backward
-function in this book is a VJP built by composing the axioms here ---
-the partial-derivative function \(\pdiv\), its three structural rules
-(chain, sum, product), and three VJP record types (\(\HasVJP\),
+function in this book is a VJP built by composing the foundation
+here --- the partial-derivative function \(\pdiv\) (defined via
+Mathlib's \(\fderiv\)), its three structural rules (chain, sum,
+product), and three VJP record types (\(\HasVJP\),
 \(\HasVJPMat\), \(\HasVJPthree\), one per tensor rank) that bundle a
 backward function with its correctness claim.
 
@@ -880,7 +881,7 @@ every 2D-matrix theorem (the \texttt{*Mat}-named ones) and every
 plus the 3D-tensor composition tools: \texttt{pdiv3}, \texttt{pdiv3\_comp},
 \texttt{vjp3\_comp}, \texttt{flatten\_unflatten}, \texttt{unflatten\_flatten},
 \texttt{transpose}. Still no matrix composition. About half of this
-chapter. BN itself is self-contained in Ch 5's own axioms; it only
+chapter. BN itself is self-contained in Ch 5's own theorems; it only
 reuses \texttt{vjp\_comp} from here.
 
 \textbf{Target: ResNet-34 (Ch 6).} CNN subset plus
@@ -897,16 +898,16 @@ first-half plus Ch 3-6 is a complete reading list; Ch 7--10 are
 strictly skippable.
 
 \textbf{Target: MobileNet V2 (Ch 7).} ResNet subset unchanged. The
-depthwise chapter introduces its own axioms but doesn't add any Ch 2
-dependencies --- the tensor-calculus tools stay the same as for
-ResNet.
+depthwise chapter introduces its own primitive (depthwise conv) but
+doesn't add any Ch 2 dependencies --- the tensor-calculus tools
+stay the same as for ResNet.
 
 \textbf{Target: EfficientNet (Ch 8).} MobileNet subset plus
 \texttt{elemwiseProduct\_has\_vjp} for the SE gate. Still no matrix
 composition.
 
 \textbf{Target: LayerNorm + GELU (Ch 9).} Same Ch 2 subset as
-EfficientNet. Ch 9 is self-contained in its own axioms and doesn't
+EfficientNet. Ch 9 is self-contained in its own theorems and doesn't
 reach back into the tensor-calculus chapter at all.
 
 \textbf{Target: Attention / ViT (Ch 10).} You finally need the
@@ -979,7 +980,7 @@ Concretely, that means:
 
 Practical reading style: work through Chapter~\ref{chap:tensor}
 slowly, then skim the rest at the pace of ``forward pass I know
-\(\to\) new \texttt{*\_has\_vjp} theorem \(\to\) see what axioms it
+\(\to\) new \texttt{*\_has\_vjp} theorem \(\to\) see what theorems it
 cites \(\to\) move on.'' The dependency DAG is your friend.
 
 \chapter{MLP: Dense Layer}
@@ -1648,7 +1649,7 @@ takes in-channels, out-channels, kernel size, padding, activation
 --- five parameters, no classes. Same data-first style as the MLP
 spec.
 
-The \texttt{.conv2d} backward pass is the axiom from earlier in
+The \texttt{.conv2d} backward pass is the theorem from earlier in
 this chapter (\S~\ref{ax:conv2d_has_vjp3}): the input VJP is
 another convolution, using the kernel reversed along both spatial
 axes. The max-pool backward (\S~\ref{ax:maxPool2_has_vjp3}) routes
@@ -1956,7 +1957,7 @@ training.
 
 The BN run's loss halves by epoch 2 and keeps dropping. Same
 optimizer, same learning rate, same dataset, same architecture plus
-the BN axioms we proved in this chapter. The three-term formula
+the BN theorems we proved in this chapter. The three-term formula
 from \S~\ref{thm:bnNormalize_has_vjp} is what makes this lift
 possible --- BN standardizes each layer's input distribution
 (\(\mu = 0\), \(\sigma = 1\)) and its backward pass returns a
@@ -2722,8 +2723,7 @@ BN uses (Chapter~\ref{chap:bn}) applied to a different axis; see
 approximation of ReLU: $\mathrm{GELU}(x) = x \cdot \Phi(x)$ where
 $\Phi$ is the standard-normal CDF. Differentiable everywhere; the
 ``soft gate'' behavior near zero is a measurable accuracy improvement
-in transformers. Diagonal activation Jacobian, same axiom family as
-ReLU.
+in transformers. Diagonal activation Jacobian, same family as ReLU.
 
 Chapter~\ref{chap:attention} uses both to define ViT.
 
@@ -3163,7 +3163,7 @@ composes from the same small set of primitives plus a handful of
 architecture-specific bundled layers. Three rules (chain, additive
 fan-in, multiplicative fan-in). Five Jacobian tricks (diagonal,
 sparse Toeplitz, binary selection, rank-1 correction, outer
-product). 30 axioms, 45 theorems, zero sorrys.
+product). Zero project axioms, 72 theorems, zero sorrys.
 
 That's the whole framework. The rest of the book is picking
 architectures off the shelf. Stamp collecting, as Rutherford would say.
@@ -4821,19 +4821,21 @@ lake build LeanMlir.Proofs.MLP LeanMlir.Proofs.CNN \
 
 If the build succeeds, every theorem in the proof suite type-checked
 against Lean's kernel --- that is the entire verification. Zero
-\texttt{sorry}s, every VJP formula proved or tied to a numerically
-verified axiom (see Appendix~\ref{app:verification}).
+\texttt{sorry}s, zero project axioms, every VJP formula proved
+against Mathlib's \(\fderiv\) (see
+Appendix~\ref{app:verification}).
 
-To also run the numerical gradient checks on the axioms:
+To also run the numerical gradient checks:
 
 \begin{verbatim}
 python3 LeanMlir/Proofs/check_axioms.py
 \end{verbatim}
 
-Every axiom in the suite has a finite-difference test that compares
-its claimed Jacobian formula against the numerical derivative. The
-check typically completes in under a minute and reports pass/fail
-per axiom.
+(The script's name predates the axiom-count going to zero.)
+Every closed-form Jacobian formula in the suite has a
+finite-difference test that compares the formula against the
+numerical derivative. The check typically completes in under a
+minute and reports pass/fail per formula.
 
 \section*{Common troubleshooting}
 
