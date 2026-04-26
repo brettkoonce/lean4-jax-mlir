@@ -64,7 +64,7 @@ namespace Proofs
 -- the composed matrix functions. The four helpers below cover the linear
 -- building blocks (matmul-by-const-left/right, scalar-scale, transpose);
 -- non-linear ingredients (rowSoftmax, layerNorm, gelu) get dedicated
--- Diff axioms further down where they're introduced.
+-- Diff theorems further down where they're introduced.
 -- ════════════════════════════════════════════════════════════════
 
 lemma matmul_right_const_flat_diff {m p q : Nat} (D : Mat p q) :
@@ -633,24 +633,20 @@ fan-in. Every piece has been proved. The composition is mechanical.
 
 /-! ### The backward, concretely
 
-Previously this section ended with a single `axiom sdpa_has_vjp` whose
-type was just `(... functions) × (... functions) × (... functions)`.
-That's **vacuous as a correctness claim** — a triple of zero functions
-satisfies it. Phase 1 replaces that with:
+Earlier drafts of this section ended with a single `axiom sdpa_has_vjp`
+whose type was just `(... functions) × (... functions) × (... functions)`.
+That was **vacuous as a correctness claim** — a triple of zero functions
+satisfies it. The current state is:
 
 1. **Concrete definitions** of `sdpa_back_Q`, `sdpa_back_K`, `sdpa_back_V`
    transcribed from the step-by-step derivation above.
-2. **Honest correctness axioms** stated in terms of `pdivMat` (the
-   matrix-level partial derivative primitive from `Tensor.lean`).
+2. **Honest correctness theorems** stated in terms of `pdivMat` (the
+   matrix-level partial derivative primitive from `Tensor.lean`),
+   proved compositionally via the four-step `vjpMat_comp` chain
+   described in §Q-correctness below.
 
-The correctness axioms are **still axioms** — proving them requires the
-matrix-level VJP composition framework (Phase 2). But now they *say*
-something: each backward equals the pdivMat-contracted cotangent, which
-is the definition of being a correct VJP.
-
-The concrete formulas here are numerically gradient-checked in
-`check_axioms.py` (`test_sdpa_back_Q/K/V`), so the axioms are credible
-up to floating-point precision even before the formal proof lands.
+The concrete formulas are also numerically gradient-checked in
+`check_axioms.py` (`test_sdpa_back_Q/K/V`) for cross-validation.
 -/
 
 /-- `1 / sqrt(d)`, the SDPA scale factor. -/
@@ -708,7 +704,7 @@ Four steps, four already-proved `HasVJPMat` building blocks:
 Chain them with `vjpMat_comp` thrice → a `HasVJPMat` for the full
 Q-path. Then show the chain's backward function equals `sdpa_back_Q`
 pointwise (trivial — the chain's backward literally computes the same
-nested formula) and invoke its `.correct` to discharge the axiom. -/
+nested formula) and invoke its `.correct` to discharge the goal. -/
 
 /-- Explicit 4-composition forward for SDPA, varying Q with K, V fixed. -/
 noncomputable def sdpa_Q_chain (n d : Nat) (K V : Mat n d) : Mat n d → Mat n d :=
@@ -969,12 +965,12 @@ head axis. Formula remains numerically gradient-checked in
     4. Concatenate the head outputs back along the feature axis.
     5. Output projection Wo · concat + bo (per-token dense).
 
-    The bundled VJP axiom below packages the correctness of this
-    whole thing — equivalent to composing dense Jacobians, the per-head
-    SDPA jacobians (we already proved `sdpa_back_{Q,K,V}_correct`),
-    and the reshape/unreshape `pdiv_reindex` facts, with the "per-head
-    independence" fact as the one primitive that doesn't factor through
-    existing axioms. -/
+    The bundled VJP theorem below packages the correctness of this
+    whole thing — composing dense Jacobians, the per-head SDPA
+    jacobians (we already proved `sdpa_back_{Q,K,V}_correct`), and
+    the reshape/unreshape `pdiv_reindex` facts, with the per-head
+    independence handled by Phase 3's column-stacking framework
+    (`pdivMat_colIndep` + `colSlabwise_has_vjp_mat`). -/
 noncomputable def mhsa_layer (N heads d_head : Nat)
     (Wq Wk Wv Wo : Mat (heads * d_head) (heads * d_head))
     (bq bk bv bo : Vec (heads * d_head))
@@ -1933,7 +1929,7 @@ Every piece is now a `HasVJPMat` on `Mat N D`:
 - `+` residuals — `biPathMat_has_vjp` (theorem, Tensor.lean) with identity
 
 The transformer block theorem below glues these with `vjpMat_comp` and
-`biPathMat_has_vjp`. No new axioms beyond `mhsa_has_vjp_mat`. -/
+`biPathMat_has_vjp`. Zero new axioms — every piece is a theorem. -/
 
 /-- MLP sublayer of a transformer block: `dense ∘ GELU ∘ dense` applied per-token.
 
@@ -1959,8 +1955,9 @@ lemma transformerMlp_flat_diff (N D mlpDim : Nat)
   unfold transformerMlp Mat.unflatten Mat.flatten dense gelu geluScalar
   -- After unfolding, the three layers compose as one explicit function.
   -- `dense` and the two row indexings are linear; `geluScalar` is the
-  -- only obstacle (handled by `gelu_per_token_flat_diff`'s axiom). We
-  -- factor through the gelu helper rather than reproving it inline.
+  -- only obstacle (handled by `gelu_per_token_flat_diff`, now a
+  -- theorem via Real.differentiable_tanh). We factor through the
+  -- gelu helper rather than reproving it inline.
   -- Strategy: show the function equals `flat_dense₂ ∘ flat_gelu ∘ flat_dense₁`
   -- through `Mat.unflatten_flatten` round-trips, then chain `Differentiable.comp`.
   have h1 : Differentiable ℝ (fun v : Vec (N * D) =>
@@ -2504,10 +2501,10 @@ lemma vit_body_flat_diff (k N heads d_head mlpDim : Nat) (ε : ℝ) (hε : 0 < �
     Diff helpers.
 
     Conceptually still the punchline: a depth-k ViT backbone has a
-    correct VJP, composed from proved building blocks plus the bundled
-    axioms (`mhsa_has_vjp_mat` and its flat-diff sibling for attention;
-    the per-token LN/MLP smoothness Diff axioms introduced by the
-    foundation flip). -/
+    correct VJP, composed entirely from proved building blocks. With
+    Phase 3's column-stacking framework, even `mhsa_has_vjp_mat` and
+    its flat-diff sibling are theorems now, so this whole chain is
+    pure-Mathlib closure with no project axioms. -/
 noncomputable def vit_body_has_vjp_mat (k N heads d_head mlpDim : Nat) (ε : ℝ)
     (hε : 0 < ε)
     (γ1 β1 : ℝ)
@@ -2549,7 +2546,8 @@ noncomputable def vit_body_has_vjp_mat (k N heads d_head mlpDim : Nat) (ε : ℝ
   building blocks (matmul, scalarScale, rowSoftmax, matmul). Formulas
   are also numerically gradient-checked as a belt-and-braces check.
 
-**Three calculus axioms do all the structural work:**
+**Three calculus rules do all the structural work** (now theorems
+proved from Mathlib's `fderiv`, formerly axioms):
 
     pdiv_comp   (chain rule — functions compose, derivatives compose)
     pdiv_add    (linearity — derivatives of sums are sums of derivatives)
@@ -2567,7 +2565,7 @@ whose Jacobians are dense but exploitable:
    accumulation.
 
 **That is the complete taxonomy.** I've thought hard about this and
-cannot find a sixth trick or a fourth calculus axiom anywhere in the
+cannot find a sixth trick or a fourth calculus rule anywhere in the
 modern architecture zoo. Every paper, every block, every optimization
 is a rearrangement of these ten things.
 
@@ -3663,7 +3661,7 @@ lemma classifier_flat_diff (N D nClasses : Nat)
     `vjp_comp` steps glueing `patchEmbed_flat_has_vjp`,
     `hasVJPMat_to_hasVJP (vit_body_has_vjp_mat ...)`, and
     `classifier_flat_has_vjp`. Each `vjp_comp`'s Diff hypotheses are
-    discharged by the per-stage Diff lemmas/axioms above. -/
+    discharged by the per-stage Diff theorems above. -/
 noncomputable def vit_full_has_vjp
     (ic H W patchSize N mlpDim heads d_head kBlocks nClasses : Nat)
     (W_conv : Kernel4 (heads * d_head) ic patchSize patchSize)
