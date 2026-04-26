@@ -1495,9 +1495,22 @@ noncomputable def maxPool2 {c h w : Nat} (x : Tensor3 c (2*h) (2*w)) : Tensor3 c
       }, {
         -- scatter: accumulate by addition (no overlap with stride = window)
         ^bb0(%a, %b): stablehlo.return (stablehlo.add %a, %b)
-      }) {window_dimensions = [1,1,2,2], window_strides = [1,1,2,2]} -/
-axiom maxPool2_has_vjp3 {c h w : Nat} :
-    HasVJP3 (maxPool2 : Tensor3 c (2*h) (2*w) → Tensor3 c h w)
+      }) {window_dimensions = [1,1,2,2], window_strides = [1,1,2,2]}
+
+    **Canonical (junk-at-tie) witness.** `HasVJP3.correct` is
+    satisfied by the canonical pdiv3-derived backward via `rfl`. At
+    argmax-tie boundaries `maxPool2` is not differentiable, so `pdiv3`
+    agrees with `fderiv`'s junk default of `0` and the canonical
+    witness is also `0` there. The codegen emits the
+    `select_and_scatter` formula above instead — see
+    `LeanMlir/Proofs/README.md` for the trust-boundary discussion. -/
+noncomputable def maxPool2_has_vjp3 {c h w : Nat} :
+    HasVJP3 (maxPool2 : Tensor3 c (2*h) (2*w) → Tensor3 c h w) where
+  backward x dy ci hi wi :=
+    ∑ co : Fin c, ∑ ho : Fin h, ∑ wo : Fin w,
+      pdiv3 (maxPool2 : Tensor3 c (2*h) (2*w) → Tensor3 c h w)
+            x ci hi wi co ho wo * dy co ho wo
+  correct _ _ _ _ _ := rfl
 
 /-- Named accessor for the maxPool2 input backward — aligns with MLIR
     `stablehlo.select_and_scatter` in codegen. -/

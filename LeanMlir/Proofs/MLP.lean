@@ -293,16 +293,23 @@ axiom pdiv_relu (n : Nat) (x : Vec n)
     pdiv (relu n) x i j =
       if i = j then (if x i > 0 then 1 else 0) else 0
 
-/-- **ReLU VJP — axiomatized.**
+/-- **ReLU bundled VJP — canonical (junk-at-kink) witness.**
 
-    With the foundation flipped to `fderiv`-grounded `pdiv`, ReLU's
-    `correct` field cannot be discharged for arbitrary `x` — at points
-    where some coordinate is zero, `relu n` is not `Differentiable` and
-    `pdiv (relu n) x` agrees with `fderiv`'s junk default rather than
-    the subgradient convention. The axiom asserts existence of the
-    subgradient-routing backward, matching how every ML framework
-    treats ReLU at the kink (`relu'(0) := 0`, conventionally). -/
-axiom relu_has_vjp (n : Nat) : HasVJP (relu n)
+    `HasVJP.correct` is satisfied by the canonical pdiv-derived backward:
+    at smooth points it is the diagonal indicator (per `pdiv_relu`); at
+    points where some coordinate is zero, `pdiv (relu n) x` agrees with
+    `fderiv`'s junk default of `0`, so the canonical backward is `0`
+    there too — and `correct` holds by `rfl`.
+
+    The codegen (`MlirCodegen.lean`) emits the standard subgradient
+    formula `if x > 0 then dy else 0` instead, which agrees with the
+    canonical witness at smooth points and differs at the kinks (the
+    convention `relu'(0) := 0` used by every ML framework). The
+    Lean-vs-codegen gap at the kinks is the codegen trust boundary —
+    see `LeanMlir/Proofs/README.md`. -/
+noncomputable def relu_has_vjp (n : Nat) : HasVJP (relu n) where
+  backward x dy i := ∑ j : Fin n, pdiv (relu n) x i j * dy j
+  correct _ _ _  := rfl
 
 -- ════════════════════════════════════════════════════════════════
 -- § Softmax Cross-Entropy Loss
@@ -334,19 +341,22 @@ noncomputable def mlpForward {d₀ d₁ d₂ d₃ : Nat}
     Vec d₀ → Vec d₃ :=
   dense W₂ b₂ ∘ relu d₂ ∘ dense W₁ b₁ ∘ relu d₁ ∘ dense W₀ b₀
 
-/-- **MLP composition VJP — axiomatized.**
+/-- **MLP composition VJP — canonical witness.**
 
     The MLP forward composes `dense W b` (everywhere `Differentiable`)
-    with `relu` (non-`Differentiable` at the kinks). Since `vjp_comp`
-    requires both functions in the composition to be `Differentiable`
-    everywhere (to discharge the `pdiv_comp` chain rule for all `x`),
-    we cannot mechanically build `mlp_has_vjp` via repeated
-    `vjp_comp`. Instead, axiomatize it — the subgradient routing
-    through `relu_has_vjp` is the source of axiomaticness anyway. -/
-axiom mlp_has_vjp {d₀ d₁ d₂ d₃ : Nat}
+    with `relu` (non-`Differentiable` at the kinks). `vjp_comp` would
+    require `Differentiable ℝ (relu n)`, which doesn't hold globally,
+    so the chain-rule route is blocked. The canonical pdiv-derived
+    backward inhabits `HasVJP.correct` directly via `rfl` — the
+    codegen substitutes the subgradient formula at the kinks (see
+    `LeanMlir/Proofs/README.md` for the trust-boundary discussion). -/
+noncomputable def mlp_has_vjp {d₀ d₁ d₂ d₃ : Nat}
     (W₀ : Mat d₀ d₁) (b₀ : Vec d₁)
     (W₁ : Mat d₁ d₂) (b₁ : Vec d₂)
     (W₂ : Mat d₂ d₃) (b₂ : Vec d₃) :
-    HasVJP (mlpForward W₀ b₀ W₁ b₁ W₂ b₂)
+    HasVJP (mlpForward W₀ b₀ W₁ b₁ W₂ b₂) where
+  backward x dy i :=
+    ∑ j : Fin d₃, pdiv (mlpForward W₀ b₀ W₁ b₁ W₂ b₂) x i j * dy j
+  correct _ _ _  := rfl
 
 end Proofs
