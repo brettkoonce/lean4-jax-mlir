@@ -28,7 +28,18 @@
         "chk_softmaxCE_grad",
         "chk_sdpa_back_Q_correct",
         "chk_sdpa_back_K_correct",
-        "chk_sdpa_back_V_correct"
+        "chk_sdpa_back_V_correct",
+        "chk_relu_has_vjp_correct",
+        "chk_mlp_has_vjp_correct",
+        "chk_maxPool2_has_vjp3_correct",
+        "chk_depthwise_has_vjp3_correct",
+        "chk_residual_has_vjp_correct",
+        "chk_residualProj_has_vjp_correct",
+        "chk_seBlock_has_vjp_correct",
+        "chk_gelu_has_vjp_correct",
+        "chk_layerNorm_has_vjp_correct",
+        "chk_mhsa_has_vjp_mat_correct",
+        "chk_transformerBlock_has_vjp_mat_correct"
     ],
     "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"],
     "enable_nanoda": false

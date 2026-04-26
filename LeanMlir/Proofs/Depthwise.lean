@@ -1197,4 +1197,16 @@ Derived helpers (not axioms):
 - `depthwiseConv2d_bias_grad_formula` — the concrete sum-over-spatial
   closed-form (numerically verified to equal the bias-VJP's backward). -/
 
+/-- **Public correctness theorem for `depthwise_has_vjp3`**: the
+proved input-VJP's backward equals the `pdiv3`-contracted Jacobian. -/
+theorem depthwise_has_vjp3_correct {c h w kH kW : Nat}
+    (W : DepthwiseKernel c kH kW) (b : Vec c)
+    (x : Tensor3 c h w) (dy : Tensor3 c h w)
+    (ci : Fin c) (hi : Fin h) (wi : Fin w) :
+    (depthwise_has_vjp3 (h := h) (w := w) W b).backward x dy ci hi wi =
+    ∑ co : Fin c, ∑ ho : Fin h, ∑ wo : Fin w,
+      pdiv3 (depthwiseConv2d W b : Tensor3 c h w → Tensor3 c h w)
+            x ci hi wi co ho wo * dy co ho wo :=
+  (depthwise_has_vjp3 (h := h) (w := w) W b).correct x dy ci hi wi
+
 end Proofs

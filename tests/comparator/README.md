@@ -1,6 +1,6 @@
 # Comparator-based independent kernel re-check
 
-This directory holds an end-to-end verification of 27 theorems from the
+This directory holds an end-to-end verification of 38 theorems from the
 proof suite using
 [leanprover/comparator](https://github.com/leanprover/comparator) — the
 trustworthy-judge tool the Lean Zulip community recommended for projects
@@ -16,17 +16,21 @@ opinion.
 
 ## What gets verified
 
-The 27 theorems span foundation rules + every chapter's headline
-Jacobian:
+The 38 theorems span foundation rules, every chapter's headline
+Jacobian, and the public `*_has_vjp_correct` wrappers:
 
 | Bucket | Theorems |
 |---|---|
 | Foundation calculus rules | `pdiv_comp`, `pdiv_add`, `pdiv_mul`, `pdiv_id`, `pdiv_const`, `pdiv_reindex`, `pdiv_finset_sum`, `pdivMat_rowIndep` |
 | Mat-level structural rules | `pdivMat_comp`, `pdivMat_matmul_left_const`, `pdivMat_scalarScale`, `pdivMat_transpose` |
-| Ch 3 MLP | `pdiv_dense`, `pdiv_dense_W`, `pdiv_dense_b`, `dense_weight_grad_correct`, `dense_bias_grad_correct` |
+| Ch 3 MLP | `pdiv_dense`, `pdiv_dense_W`, `pdiv_dense_b`, `dense_weight_grad_correct`, `dense_bias_grad_correct`, `relu_has_vjp_correct`, `mlp_has_vjp_correct` |
+| Ch 4 CNN | `maxPool2_has_vjp3_correct` |
 | Ch 5 BN | `pdiv_bnAffine`, `pdiv_bnCentered`, `pdiv_bnIstdBroadcast`, `pdiv_bnNormalize` (the famous 3-term cancellation) |
-| Ch 9 LN+GELU | `pdiv_gelu` |
-| Ch 10 Attention | `pdiv_softmax`, `softmaxCE_grad`, `sdpa_back_Q/K/V_correct` |
+| Ch 6 Residual | `residual_has_vjp_correct`, `residualProj_has_vjp_correct` |
+| Ch 7 Depthwise | `depthwise_has_vjp3_correct` |
+| Ch 8 SE | `seBlock_has_vjp_correct` |
+| Ch 9 LN+GELU | `pdiv_gelu`, `gelu_has_vjp_correct`, `layerNorm_has_vjp_correct` |
+| Ch 10 Attention | `pdiv_softmax`, `softmaxCE_grad`, `sdpa_back_Q/K/V_correct`, `mhsa_has_vjp_mat_correct`, `transformerBlock_has_vjp_mat_correct` |
 
 For each, comparator confirms:
 
@@ -110,9 +114,9 @@ keeps the audit reproducible until they land.
 
 ## What's *not* covered
 
-- **53 other theorems** in the proof suite (downstream compositions,
+- **The remaining theorems in the proof suite** (downstream compositions,
   `_diff` smoothness lemmas, `_eq_compose` rewrites). They share the
-  same foundation as the 27 above, so methodologically there's nothing
+  same foundation as the 38 above, so methodologically there's nothing
   new to discover — just a lot of mechanical signature-extraction.
 - **`noncomputable def` artifacts** like `vit_full_has_vjp`,
   `mhsa_layer_has_vjp_mat`, etc. comparator's `theorem_names` matches

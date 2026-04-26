@@ -3713,4 +3713,52 @@ noncomputable def vit_full_has_vjp
     inner_has_vjp
     (classifier_flat_has_vjp N (heads * d_head) nClasses Wcls bcls)
 
+/-! ## Public correctness theorems for the attention defs
+
+The `_has_vjp` / `_has_vjp_mat` defs above bundle a backward function
+with a `.correct` field; these `_correct` theorems expose that field
+as a top-level proposition so consumers can refer to the contract
+directly without reaching into record internals. -/
+
+/-- **Public correctness theorem for `mhsa_has_vjp_mat`**: multi-head
+SDPA's backward equals the `pdivMat`-contracted Jacobian. Phase 3's
+column-stacking proof closes this without any project axiom. -/
+theorem mhsa_has_vjp_mat_correct (N heads d_head : Nat)
+    (Wq Wk Wv Wo : Mat (heads * d_head) (heads * d_head))
+    (bq bk bv bo : Vec (heads * d_head))
+    (X : Mat N (heads * d_head)) (dY : Mat N (heads * d_head))
+    (i : Fin N) (j : Fin (heads * d_head)) :
+    (mhsa_has_vjp_mat N heads d_head Wq Wk Wv Wo bq bk bv bo).backward X dY i j =
+    ∑ k : Fin N, ∑ l : Fin (heads * d_head),
+      pdivMat (mhsa_layer N heads d_head Wq Wk Wv Wo bq bk bv bo)
+              X i j k l * dY k l :=
+  (mhsa_has_vjp_mat N heads d_head Wq Wk Wv Wo bq bk bv bo).correct X dY i j
+
+/-- **Public correctness theorem for `transformerBlock_has_vjp_mat`**:
+the full transformer block backward (attention sublayer + MLP sublayer
+glued by `vjpMat_comp`) equals the `pdivMat`-contracted Jacobian. -/
+theorem transformerBlock_has_vjp_mat_correct
+    (N heads d_head mlpDim : Nat)
+    (ε γ1 β1 : ℝ) (hε : 0 < ε)
+    (Wq Wk Wv Wo : Mat (heads * d_head) (heads * d_head))
+    (bq bk bv bo : Vec (heads * d_head))
+    (γ2 β2 : ℝ)
+    (Wfc1 : Mat (heads * d_head) mlpDim) (bfc1 : Vec mlpDim)
+    (Wfc2 : Mat mlpDim (heads * d_head)) (bfc2 : Vec (heads * d_head))
+    (X : Mat N (heads * d_head)) (dY : Mat N (heads * d_head))
+    (i : Fin N) (j : Fin (heads * d_head)) :
+    (transformerBlock_has_vjp_mat N heads d_head mlpDim ε γ1 β1 hε
+        Wq Wk Wv Wo bq bk bv bo γ2 β2 Wfc1 bfc1 Wfc2 bfc2).backward X dY i j =
+    ∑ k : Fin N, ∑ l : Fin (heads * d_head),
+      pdivMat (transformerBlock N heads d_head mlpDim ε γ1 β1
+                 Wq Wk Wv Wo bq bk bv bo γ2 β2 Wfc1 bfc1 Wfc2 bfc2)
+              X i j k l * dY k l :=
+  (transformerBlock_has_vjp_mat N heads d_head mlpDim ε γ1 β1 hε
+     Wq Wk Wv Wo bq bk bv bo γ2 β2 Wfc1 bfc1 Wfc2 bfc2).correct X dY i j
+
+/- Note: `vit_full_has_vjp_correct` is omitted because `vit_full_has_vjp`
+   takes 30+ explicit arguments (full ViT hyperparameter set), making
+   the wrapper unwieldy. The contract is still accessible directly via
+   `(vit_full_has_vjp ic H W ... bcls hε).correct`. -/
+
 end Proofs

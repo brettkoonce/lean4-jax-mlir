@@ -1624,4 +1624,18 @@ Derived (not axioms):
   `Tensor.lean`; 4D reshape (`Kernel4.flatten` / `Kernel4.unflatten`)
   defined here, both proved bijections. -/
 
+/-- **Public correctness theorem for `maxPool2_has_vjp3`**: the
+canonical-witness backward equals the `pdiv3`-contracted Jacobian
+by definition. The codegen substitutes the standard argmax-routing
+convention at non-smooth tiebreaks (see `LeanMlir/Proofs/README.md`'s
+Codegen Trust Boundary). -/
+theorem maxPool2_has_vjp3_correct {c h w : Nat}
+    (x : Tensor3 c (2*h) (2*w)) (dy : Tensor3 c h w)
+    (ci : Fin c) (hi : Fin (2*h)) (wi : Fin (2*w)) :
+    (maxPool2_has_vjp3 (c := c) (h := h) (w := w)).backward x dy ci hi wi =
+    ∑ co : Fin c, ∑ ho : Fin h, ∑ wo : Fin w,
+      pdiv3 (maxPool2 : Tensor3 c (2*h) (2*w) → Tensor3 c h w)
+            x ci hi wi co ho wo * dy co ho wo :=
+  maxPool2_has_vjp3.correct x dy ci hi wi
+
 end Proofs

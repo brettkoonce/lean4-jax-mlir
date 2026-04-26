@@ -428,4 +428,30 @@ noncomputable def mlp_has_vjp {d₀ d₁ d₂ d₃ : Nat}
     ∑ j : Fin d₃, pdiv (mlpForward W₀ b₀ W₁ b₁ W₂ b₂) x i j * dy j
   correct _ _ _  := rfl
 
+/-! ## Public correctness theorems for the canonical-witness defs
+
+Each `_has_vjp` def above bundles a backward function with a `.correct`
+field; these `_correct` theorems expose that field as a top-level
+proposition so consumers (downstream code, `tests/comparator/`,
+doc-gen4) can refer to the contract directly without reaching into
+record internals. -/
+
+/-- **Public correctness theorem for `relu_has_vjp`**: the canonical
+witness's backward equals the `pdiv`-contracted Jacobian by definition. -/
+theorem relu_has_vjp_correct (n : Nat) (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (relu_has_vjp n).backward x dy i =
+    ∑ j : Fin n, pdiv (relu n) x i j * dy j :=
+  (relu_has_vjp n).correct x dy i
+
+/-- **Public correctness theorem for `mlp_has_vjp`**: same pattern as
+`relu_has_vjp_correct`, lifted to the three-layer MLP forward. -/
+theorem mlp_has_vjp_correct {d₀ d₁ d₂ d₃ : Nat}
+    (W₀ : Mat d₀ d₁) (b₀ : Vec d₁)
+    (W₁ : Mat d₁ d₂) (b₁ : Vec d₂)
+    (W₂ : Mat d₂ d₃) (b₂ : Vec d₃)
+    (x : Vec d₀) (dy : Vec d₃) (i : Fin d₀) :
+    (mlp_has_vjp W₀ b₀ W₁ b₁ W₂ b₂).backward x dy i =
+    ∑ j : Fin d₃, pdiv (mlpForward W₀ b₀ W₁ b₁ W₂ b₂) x i j * dy j :=
+  (mlp_has_vjp W₀ b₀ W₁ b₁ W₂ b₂).correct x dy i
+
 end Proofs

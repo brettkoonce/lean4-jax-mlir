@@ -241,4 +241,22 @@ instance is pure boilerplate. For the book, we show the template once
 (ReLU, in `MLP.lean`) and assert that GELU follows the same pattern.
 -/
 
+/-- **Public correctness theorem for `gelu_has_vjp`**: the GELU
+backward (diagonal scaling by `geluScalarDeriv`) equals the
+`pdiv`-contracted Jacobian. -/
+theorem gelu_has_vjp_correct (n : Nat) (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (gelu_has_vjp n).backward x dy i =
+    ∑ j : Fin n, pdiv (gelu n) x i j * dy j :=
+  (gelu_has_vjp n).correct x dy i
+
+/-- **Public correctness theorem for `layerNorm_has_vjp`**: LayerNorm
+reuses the BN proof template (LayerNorm is BN on a different axis), so
+the contract is identical — backward equals the `pdiv`-contracted
+Jacobian of `layerNormForward`. -/
+theorem layerNorm_has_vjp_correct (n : Nat) (ε γ β : ℝ) (hε : 0 < ε)
+    (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (layerNorm_has_vjp n ε γ β hε).backward x dy i =
+    ∑ j : Fin n, pdiv (layerNormForward n ε γ β) x i j * dy j :=
+  (layerNorm_has_vjp n ε γ β hε).correct x dy i
+
 end Proofs

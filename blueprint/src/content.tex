@@ -5012,8 +5012,9 @@ flips, wrong contraction axis, swapped indices).
 \texttt{tests/comparator/} wires the project up to
 \href{https://github.com/leanprover/comparator}{leanprover/comparator},
 the Lean community's trustworthy-judge tool for projects that claim
-zero project axioms. It runs 27 theorems --- the foundation rules
-plus every chapter's headline Jacobian --- through Lean's kernel
+zero project axioms. It runs 38 theorems --- the foundation rules,
+every chapter's headline Jacobian, and the public
+\texttt{*\_has\_vjp\_correct} wrappers --- through Lean's kernel
 typechecker independently of the elaborator, with an axiom-allowlist
 of exactly \(\{\texttt{propext}, \texttt{Quot.sound},
 \texttt{Classical.choice}\}\). Any project axiom in the transitive
@@ -5022,7 +5023,7 @@ closure of any verified theorem would fail the run.
 This is what closes the gap between ``the elaborator accepted my
 proofs'' (which \texttt{lake build} confirms) and ``the kernel
 agrees, audited from a separate process'' (which comparator confirms).
-The 27-theorem coverage is illustrative rather than exhaustive ---
+The 38-theorem coverage is illustrative rather than exhaustive ---
 the same recipe scales to any subset of the proof suite, and the
 same allowlist applies because every theorem in the project closes
 the same way.

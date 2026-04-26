@@ -123,4 +123,25 @@ DAG. Composition (chain rule) handles the "linear" part; bi-path handles
 the joins. Together they're enough for any computation graph.
 -/
 
+/-- **Public correctness theorem for `residual_has_vjp`**: skip-connection
+backward equals the `pdiv`-contracted Jacobian of `f + id`. -/
+theorem residual_has_vjp_correct {n : Nat}
+    (f : Vec n → Vec n) (hf_diff : Differentiable ℝ f) (hf : HasVJP f)
+    (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (residual_has_vjp f hf_diff hf).backward x dy i =
+    ∑ j : Fin n, pdiv (residual f) x i j * dy j :=
+  (residual_has_vjp f hf_diff hf).correct x dy i
+
+/-- **Public correctness theorem for `residualProj_has_vjp`**: same as
+`residual_has_vjp_correct` but for the projected variant where the skip
+isn't identity. -/
+theorem residualProj_has_vjp_correct {m n : Nat}
+    (proj f : Vec m → Vec n)
+    (hproj_diff : Differentiable ℝ proj) (hf_diff : Differentiable ℝ f)
+    (hproj : HasVJP proj) (hf : HasVJP f)
+    (x : Vec m) (dy : Vec n) (i : Fin m) :
+    (residualProj_has_vjp proj f hproj_diff hf_diff hproj hf).backward x dy i =
+    ∑ j : Fin n, pdiv (residualProj proj f) x i j * dy j :=
+  (residualProj_has_vjp proj f hproj_diff hf_diff hproj hf).correct x dy i
+
 end Proofs

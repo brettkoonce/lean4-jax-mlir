@@ -1,6 +1,10 @@
 import LeanMlir.Proofs.Tensor
 import LeanMlir.Proofs.MLP
+import LeanMlir.Proofs.CNN
 import LeanMlir.Proofs.BatchNorm
+import LeanMlir.Proofs.Residual
+import LeanMlir.Proofs.Depthwise
+import LeanMlir.Proofs.SE
 import LeanMlir.Proofs.LayerNorm
 import LeanMlir.Proofs.Attention
 
@@ -17,8 +21,9 @@ appear in each Solution-side proof's transitive axiom closure, and
 (c) the Solution typechecks against Lean's kernel independently of the
 elaborator. See `README.md` for the full prereq + run instructions.
 
-The 27 theorems below span the foundation rules + every chapter's headline
-Jacobian — enough to verify "zero project axioms" reaches everywhere. The
+The 38 theorems below span the foundation rules, every chapter's headline
+Jacobian, and the public `*_has_vjp_correct` wrappers — enough to verify
+"zero project axioms" reaches everywhere. The
 docstrings give each theorem's mathematical content in regular LaTeX (so
 non-Lean readers can follow the math) and a one-line note on its role in
 the proof tree.
@@ -318,3 +323,114 @@ theorem chk_sdpa_back_V_correct (n d : Nat) (Q K V dOut : Mat n d)
     sdpa_back_V n d Q K V dOut i j =
     ∑ k : Fin n, ∑ l : Fin d,
       pdivMat (fun V' => sdpa n d Q K V') V i j k l * dOut k l := by sorry
+
+-- Public correctness theorems for canonical-witness defs ────────────
+
+/-- **`relu_has_vjp` contract**: canonical witness's backward equals the
+`pdiv`-contracted Jacobian by definition. -/
+theorem chk_relu_has_vjp_correct (n : Nat) (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (relu_has_vjp n).backward x dy i =
+    ∑ j : Fin n, pdiv (relu n) x i j * dy j := by sorry
+
+/-- **`mlp_has_vjp` contract**: same pattern for the three-layer MLP forward. -/
+theorem chk_mlp_has_vjp_correct {d₀ d₁ d₂ d₃ : Nat}
+    (W₀ : Mat d₀ d₁) (b₀ : Vec d₁)
+    (W₁ : Mat d₁ d₂) (b₁ : Vec d₂)
+    (W₂ : Mat d₂ d₃) (b₂ : Vec d₃)
+    (x : Vec d₀) (dy : Vec d₃) (i : Fin d₀) :
+    (mlp_has_vjp W₀ b₀ W₁ b₁ W₂ b₂).backward x dy i =
+    ∑ j : Fin d₃, pdiv (mlpForward W₀ b₀ W₁ b₁ W₂ b₂) x i j * dy j := by sorry
+
+/-- **`maxPool2_has_vjp3` contract**: canonical witness equals the
+`pdiv3`-contracted Jacobian. Codegen substitutes argmax-routing at
+non-smooth tiebreaks. -/
+theorem chk_maxPool2_has_vjp3_correct {c h w : Nat}
+    (x : Tensor3 c (2*h) (2*w)) (dy : Tensor3 c h w)
+    (ci : Fin c) (hi : Fin (2*h)) (wi : Fin (2*w)) :
+    (maxPool2_has_vjp3 (c := c) (h := h) (w := w)).backward x dy ci hi wi =
+    ∑ co : Fin c, ∑ ho : Fin h, ∑ wo : Fin w,
+      pdiv3 (maxPool2 : Tensor3 c (2*h) (2*w) → Tensor3 c h w)
+            x ci hi wi co ho wo * dy co ho wo := by sorry
+
+/-- **`depthwise_has_vjp3` contract**: proved input-VJP equals the
+`pdiv3`-contracted Jacobian. -/
+theorem chk_depthwise_has_vjp3_correct {c h w kH kW : Nat}
+    (W : DepthwiseKernel c kH kW) (b : Vec c)
+    (x : Tensor3 c h w) (dy : Tensor3 c h w)
+    (ci : Fin c) (hi : Fin h) (wi : Fin w) :
+    (depthwise_has_vjp3 (h := h) (w := w) W b).backward x dy ci hi wi =
+    ∑ co : Fin c, ∑ ho : Fin h, ∑ wo : Fin w,
+      pdiv3 (depthwiseConv2d W b : Tensor3 c h w → Tensor3 c h w)
+            x ci hi wi co ho wo * dy co ho wo := by sorry
+
+/-- **`residual_has_vjp` contract**: skip-connection backward equals
+the `pdiv`-contracted Jacobian of `f + id`. -/
+theorem chk_residual_has_vjp_correct {n : Nat}
+    (f : Vec n → Vec n) (hf_diff : Differentiable ℝ f) (hf : HasVJP f)
+    (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (residual_has_vjp f hf_diff hf).backward x dy i =
+    ∑ j : Fin n, pdiv (residual f) x i j * dy j := by sorry
+
+/-- **`residualProj_has_vjp` contract**: projected variant where the
+skip isn't identity. -/
+theorem chk_residualProj_has_vjp_correct {m n : Nat}
+    (proj f : Vec m → Vec n)
+    (hproj_diff : Differentiable ℝ proj) (hf_diff : Differentiable ℝ f)
+    (hproj : HasVJP proj) (hf : HasVJP f)
+    (x : Vec m) (dy : Vec n) (i : Fin m) :
+    (residualProj_has_vjp proj f hproj_diff hf_diff hproj hf).backward x dy i =
+    ∑ j : Fin n, pdiv (residualProj proj f) x i j * dy j := by sorry
+
+/-- **`seBlock_has_vjp` contract**: SE-block backward (input × gate
+Jacobian via product rule) equals the `pdiv`-contracted Jacobian. -/
+theorem chk_seBlock_has_vjp_correct {n : Nat}
+    (gate : Vec n → Vec n) (hg_diff : Differentiable ℝ gate) (hg : HasVJP gate)
+    (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (seBlock_has_vjp gate hg_diff hg).backward x dy i =
+    ∑ j : Fin n, pdiv (seBlock gate) x i j * dy j := by sorry
+
+/-- **`gelu_has_vjp` contract**: GELU backward (diagonal scaling by
+`geluScalarDeriv`) equals the `pdiv`-contracted Jacobian. -/
+theorem chk_gelu_has_vjp_correct (n : Nat) (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (gelu_has_vjp n).backward x dy i =
+    ∑ j : Fin n, pdiv (gelu n) x i j * dy j := by sorry
+
+/-- **`layerNorm_has_vjp` contract**: LayerNorm reuses the BN proof
+template; backward equals `pdiv`-contracted Jacobian of `layerNormForward`. -/
+theorem chk_layerNorm_has_vjp_correct (n : Nat) (ε γ β : ℝ) (hε : 0 < ε)
+    (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (layerNorm_has_vjp n ε γ β hε).backward x dy i =
+    ∑ j : Fin n, pdiv (layerNormForward n ε γ β) x i j * dy j := by sorry
+
+/-- **`mhsa_has_vjp_mat` contract**: multi-head SDPA backward equals
+`pdivMat`-contracted Jacobian (Phase 3 column-stacking proof closes
+this with no project axiom). -/
+theorem chk_mhsa_has_vjp_mat_correct (N heads d_head : Nat)
+    (Wq Wk Wv Wo : Mat (heads * d_head) (heads * d_head))
+    (bq bk bv bo : Vec (heads * d_head))
+    (X : Mat N (heads * d_head)) (dY : Mat N (heads * d_head))
+    (i : Fin N) (j : Fin (heads * d_head)) :
+    (mhsa_has_vjp_mat N heads d_head Wq Wk Wv Wo bq bk bv bo).backward X dY i j =
+    ∑ k : Fin N, ∑ l : Fin (heads * d_head),
+      pdivMat (mhsa_layer N heads d_head Wq Wk Wv Wo bq bk bv bo)
+              X i j k l * dY k l := by sorry
+
+/-- **`transformerBlock_has_vjp_mat` contract**: full transformer block
+backward (attn sublayer + MLP sublayer glued by `vjpMat_comp`) equals
+`pdivMat`-contracted Jacobian. -/
+theorem chk_transformerBlock_has_vjp_mat_correct
+    (N heads d_head mlpDim : Nat)
+    (ε γ1 β1 : ℝ) (hε : 0 < ε)
+    (Wq Wk Wv Wo : Mat (heads * d_head) (heads * d_head))
+    (bq bk bv bo : Vec (heads * d_head))
+    (γ2 β2 : ℝ)
+    (Wfc1 : Mat (heads * d_head) mlpDim) (bfc1 : Vec mlpDim)
+    (Wfc2 : Mat mlpDim (heads * d_head)) (bfc2 : Vec (heads * d_head))
+    (X : Mat N (heads * d_head)) (dY : Mat N (heads * d_head))
+    (i : Fin N) (j : Fin (heads * d_head)) :
+    (transformerBlock_has_vjp_mat N heads d_head mlpDim ε γ1 β1 hε
+        Wq Wk Wv Wo bq bk bv bo γ2 β2 Wfc1 bfc1 Wfc2 bfc2).backward X dY i j =
+    ∑ k : Fin N, ∑ l : Fin (heads * d_head),
+      pdivMat (transformerBlock N heads d_head mlpDim ε γ1 β1
+                 Wq Wk Wv Wo bq bk bv bo γ2 β2 Wfc1 bfc1 Wfc2 bfc2)
+              X i j k l * dY k l := by sorry

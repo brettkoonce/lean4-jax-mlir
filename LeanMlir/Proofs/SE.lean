@@ -157,4 +157,14 @@ on-ramp; once you've internalized this VJP shape, attention falls out
 of the same theorem.
 -/
 
+/-- **Public correctness theorem for `seBlock_has_vjp`**: the SE-block
+backward (input × gate Jacobian via the product rule) equals the
+`pdiv`-contracted Jacobian of `seBlock gate`. -/
+theorem seBlock_has_vjp_correct {n : Nat}
+    (gate : Vec n → Vec n) (hg_diff : Differentiable ℝ gate) (hg : HasVJP gate)
+    (x : Vec n) (dy : Vec n) (i : Fin n) :
+    (seBlock_has_vjp gate hg_diff hg).backward x dy i =
+    ∑ j : Fin n, pdiv (seBlock gate) x i j * dy j :=
+  (seBlock_has_vjp gate hg_diff hg).correct x dy i
+
 end Proofs
