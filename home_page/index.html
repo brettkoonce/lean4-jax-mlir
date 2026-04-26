@@ -41,7 +41,7 @@ Full source: <a href="https://github.com/brettkoonce/lean4-mlir">github.com/bret
   <li><a href="blueprint/">Blueprint &mdash; interactive web version</a>
       <br><span>LaTeX-rendered statements, proof tree, cross-links to Lean source.</span></li>
   <li><a href="blueprint/dep_graph_document.html">Dependency graph &mdash; clickable DAG</a>
-      <br><span>81 nodes (10 axioms + 65 theorems + 6 definitions), colored and clustered by file.</span></li>
+      <br><span>81 nodes (0 axioms + 72 theorems + 9 definitions), colored and clustered by file.</span></li>
   <li><a href="blueprint.pdf">Blueprint &mdash; PDF</a>
       <br><span>Printable version if you prefer paper.</span></li>
 </ul>
@@ -56,7 +56,7 @@ instance, every composition is <code>vjp_comp</code>, every residual is
 <code>biPath_has_vjp</code>, and the whole ViT backbone lands as a single
 <code>HasVJPMat</code> theorem derived from one axiom (<code>mhsa_has_vjp_mat</code>).</p>
 
-<p>The resulting trust kernel: 10 axioms, zero <code>sorry</code>s. Hit
+<p>The resulting trust kernel: zero project axioms, zero <code>sorry</code>s — every theorem reduces to Lean core + Mathlib's <code>fderiv</code>. Hit
 <a href="blueprint/">the blueprint</a> and click <code>vit_body_has_vjp_mat</code>
 to see the whole chain light up back to primitives.</p>
 
