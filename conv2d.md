@@ -1,23 +1,230 @@
-# conv2d.md — depthwise input-VJP plan (Phase 2)
+# conv2d.md — input-VJP elimination plan (Phases 1, 2, 6)
 
-**Phase 1 (conv2d) status:** LANDED on `colslab-vmap-framework`.
+**Phase 1 (conv2d) status:** LANDED (commit `0b03697`).
 ~470 LOC, pure-Mathlib closure verified. See **"Phase 1 lessons"** below
 for the recipe.
 
-**Phase 2 (depthwise) status:** LANDED on `colslab-vmap-framework`
-(Apr 2026, this session). ~470 LOC including 30 LOC of new outer-Σ-co
-collapse logic. Pure-Mathlib closure verified via `#print axioms`
-(only `propext`, `Classical.choice`, `Quot.sound`). The proof template
-mirrored conv2d directly — single-shot build, no Lean errors, in part
-because the three private helpers from Phase 1 (now public in CNN.lean)
-generalized cleanly.
+**Phase 2 (depthwise) status:** LANDED (commit `50e977a`).
+~470 LOC including 30 LOC of new outer-Σ-co collapse logic. The proof
+template mirrored conv2d directly — single-shot build, no Lean errors,
+in part because the three private helpers from Phase 1 (now public in
+CNN.lean) generalized cleanly.
 
-Axiom count: **7 → 6**. The 6 remaining are pure "framework convention"
-axioms:
+**Phase 6a (patchEmbed forward + diff) status:** LANDED (commit `a0859d7`).
+~110 LOC. De-opaqued `patchEmbed_flat` from `noncomputable opaque` to
+concrete `noncomputable def`; replaced `axiom patchEmbed_flat_diff`
+with a theorem proved via `fun_prop` + `differentiableAt_pad_eval`.
+The HasVJP axiom kept as a marker (now provable, but the closed-form
+proof is its own ~400-600 LOC effort — see **Phase 6b** below).
+
+**Phase 6b (patchEmbed HasVJP) status:** READY. The recipe and
+gotchas are documented below. Estimated: 1 focused session.
+
+Axiom count: 8 → 7 (Phase 1) → 6 (Phase 2) → 5 (Phase 6a) → 4 (Phase 6b).
+
+The 4 remaining after 6b are pure framework-convention axioms:
 - 3 ReLU subgradient (`pdiv_relu`, `relu_has_vjp`, `mlp_has_vjp`)
 - 1 maxPool2 subgradient (`maxPool2_has_vjp3`)
-- 2 patchEmbed opaque-codegen (`patchEmbed_flat_has_vjp`,
-  `patchEmbed_flat_diff`)
+
+Below 4 requires `HasVJP.correct` weakening to "smooth subset only"
+(project-wide rewrite, multi-week, out of scope).
+
+---
+
+## Phase 6b — patchEmbed HasVJP closed-form (planned)
+
+The forward (de-opaqued in Phase 6a) is at `Attention.lean:2746`:
+
+```lean
+noncomputable def patchEmbed_flat
+    (ic H W patchSize N D : Nat)
+    (W_conv : Kernel4 D ic patchSize patchSize) (b_conv : Vec D)
+    (cls_token : Vec D) (pos_embed : Mat (N + 1) D) :
+    Vec (ic * H * W) → Vec ((N + 1) * D) :=
+  fun img =>
+    fun idx_out =>
+      let n := (finProdFinEquiv.symm idx_out).1
+      let d := (finProdFinEquiv.symm idx_out).2
+      pos_embed n d +
+        (if n.val = 0 then
+          cls_token d
+         else
+          b_conv d +
+          ∑ c kh kw, W_conv d c kh kw *
+            (let W' := W / patchSize
+             let p := n.val - 1
+             let h' := p / W'
+             let w' := p % W'
+             let hh := h' * patchSize + kh.val
+             let ww := w' * patchSize + kw.val
+             if hpad : hh < H ∧ ww < W then
+               img (finProdFinEquiv (finProdFinEquiv (c, ⟨hh, hpad.1⟩), ⟨ww, hpad.2⟩))
+             else 0))
+```
+
+### Closed-form backward
+
+```lean
+noncomputable def patchEmbed_input_grad_formula
+    (ic H W patchSize N D : Nat)
+    (W_conv : Kernel4 D ic patchSize patchSize)
+    (dy : Vec ((N + 1) * D)) : Vec (ic * H * W) :=
+  fun idx_in =>
+    let c  := (finProdFinEquiv.symm (finProdFinEquiv.symm idx_in).1).1
+    let hh := (finProdFinEquiv.symm (finProdFinEquiv.symm idx_in).1).2
+    let ww := (finProdFinEquiv.symm idx_in).2
+    ∑ p : Fin N, ∑ kh : Fin patchSize, ∑ kw : Fin patchSize,
+      let W' := W / patchSize
+      let h' := p.val / W'
+      let w' := p.val % W'
+      if h_match : h' * patchSize + kh.val = hh.val ∧
+                   w' * patchSize + kw.val = ww.val then
+        ∑ d : Fin D, W_conv d c kh kw *
+          dy (finProdFinEquiv (⟨p.val + 1, Nat.succ_lt_succ p.isLt⟩, d))
+      else 0
+```
+
+Why the `(p, kh, kw)` outer loop (not `(h', w', kh, kw)`): the same
+reasoning as conv2d's `(co, ho, wo)` — the loop variable `p` directly
+matches the patch-index axis of `dy`, no partial bijection needed.
+
+### Proof skeleton
+
+Mirrors conv2d's `correct` proof at `CNN.lean:284-758`. The new wrinkle
+is the n=0 (CLS row) case where the function is constant in img.
+
+```lean
+noncomputable def patchEmbed_flat_has_vjp ... :
+    HasVJP (patchEmbed_flat ...) where
+  backward := fun _img dy => patchEmbed_input_grad_formula ic H W patchSize N D W_conv dy
+  correct := by
+    intro img dy idx_in
+    set c, hh, ww via finProdFinEquiv.symm chain.
+
+    -- Step 1: per-(idx_in, idx_out) pdiv. Two cases on n.val = 0.
+    have h_pdiv : ∀ idx_out, pdiv f img idx_in idx_out = ... := by
+      intro idx_out
+      set n := (finProdFinEquiv.symm idx_out).1
+      set d := (finProdFinEquiv.symm idx_out).2
+
+      by_cases hn0 : n.val = 0
+      · -- n = 0: f at idx_out is `pos_embed n d + cls_token d`, constant in img.
+        --   pdiv = 0. RHS at n=0 also = 0 (the formula's `if n=0 then 0 else ...`).
+        rw [show (fun img' => patchEmbed_flat ... img' idx_out)
+              = (fun _ => pos_embed n d + cls_token d) from by
+              funext img'; unfold patchEmbed_flat; simp [hn0]]
+        rw [pdiv_const]
+        -- Show RHS at hn0 also = 0.
+        ...
+
+      · -- n > 0: f at idx_out = pos_embed n d + b_conv d + Σ c' kh kw, W_conv * pad-img.
+        -- Same structure as conv2d Phase 1 / depthwise Phase 2.
+        -- Decompose constant + linear-in-img, apply pdiv_add + pdiv_const,
+        -- triple distribute Σ c' kh kw via pdiv_finset_sum,
+        -- per-summand pdiv_const_mul_pi_pad_eval.
+        ...
+
+    -- Step 2: closing collapse.
+    show patchEmbed_input_grad_formula ... = ∑ idx_out, pdiv * dy idx_out
+    -- Reindex Σ idx_out ≃ Σ n × Σ d via two `Fintype.sum_equiv finProdFinEquiv.symm`
+    -- + `Fintype.sum_prod_type` (see depthwise_bias_grad_has_vjp at
+    -- Depthwise.lean:592-617 for the exact pattern).
+    rw [Fintype.sum_equiv finProdFinEquiv.symm ...]
+    rw [Fintype.sum_prod_type]
+
+    -- Now: ∑ p kh kw, formula = ∑ n d, pdiv * dy(flat(n, d)).
+
+    -- Outer Σ n collapse: split n=0 vs n>0.
+    -- For n=0: contribution is 0 (use h_pdiv at hn0).
+    -- For n>0: reindex n ↔ p+1 via Fintype.sum_equiv.
+    -- The Fin (N+1) → {0} ⊕ Fin N split or `Finset.sum_eq_zero` + reindex.
+
+    -- Then for each (p, d), unfold h_pdiv, simp Equiv.symm_apply_apply,
+    -- pull dy out, congr 1, h_indicator (2-conjunct, similar to depthwise),
+    -- by_cases on the back_cond, Σ kh kw collapse via Finset.sum_eq_single twice.
+    ...
+```
+
+### Pitfalls (carried from Phases 1, 2)
+
+The 7 pitfalls from Phase 1 (see "Phase 1 lessons" below) all apply.
+**One new pitfall** specific to patchEmbed:
+
+8. **The n.val = 0 case split must come BEFORE the Σ c kh kw distribution.**
+   If you try to apply `pdiv_const_mul_pi_pad_eval` directly without
+   first splitting on n.val, the helper assumes the inner is the standard
+   `if hpad : pad then v(σ hpad) else 0` shape. But for n = 0, the
+   function is `cls_token d` (constant), not the pad-eval pattern. Two
+   options:
+   (a) Split early via `by_cases hn0 : n.val = 0` at the top of `h_pdiv`.
+   (b) Write the forward to absorb n=0 into the pad guard:
+       `if hpad : 1 ≤ n.val ∧ hh < H ∧ ww < W then img(σ) else 0`.
+       But this changes the forward def, breaking Phase 6a's commit.
+   Recommendation: (a) — keep Phase 6a's forward stable.
+
+### Outer Σ n collapse on `n.val = 0` exclusion
+
+The closing collapse needs to convert `∑ n : Fin (N+1), body(n)` (where
+body is 0 for n=0) into `∑ p : Fin N, body(p+1)`. Two equivalent
+approaches:
+
+**Option A: Use `Fin.sum_univ_succ`.**
+```lean
+rw [Fin.sum_univ_succ]  -- splits ∑ n : Fin (N+1) into body(0) + ∑ p : Fin N, body(p.succ)
+-- body(0) reduces to 0 by hn0.
+-- Σ p part is the desired form.
+```
+
+**Option B: Use `Fintype.sum_equiv` with `Fin.succAboveEmb`.**
+More flexible but more bookkeeping.
+
+**Option A is recommended** — `Fin.sum_univ_succ` is exactly the right
+shape. The `body(0)` term should simplify to 0 directly via the n=0
+case of `h_pdiv`.
+
+### Reusable helpers from Phase 1 (also used by Phase 2)
+
+The three helpers in CNN.lean:145-242 are public:
+- `differentiableAt_pad_eval`
+- `pdiv_pi_pad_eval`
+- `pdiv_const_mul_pi_pad_eval`
+
+For Phase 6b: instantiate `c_const idx_out := W_conv d c kh kw` (where
+d is decoded from idx_out's column-second component) and `σ idx_out hpad`
+encoding the input position via the patch decomposition `(c, h'*P+kh, w'*P+kw)`.
+
+### Estimated LOC and time
+
+- **Formula def:** ~12 LOC.
+- **Per-coord pdiv lemma (`h_pdiv`):** ~200 LOC.
+  - n=0 case: ~30 LOC (constant-in-img argument).
+  - n>0 case: ~170 LOC (mirror conv2d, no Σ c collapse needed since
+    channel decoded from idx_out directly — like depthwise).
+- **Closing collapse:** ~150 LOC.
+  - Reindex Σ idx_out → Σ n d: ~20 LOC.
+  - Outer Σ n collapse on n=0 exclusion: ~30 LOC (use `Fin.sum_univ_succ`).
+  - Per-(p, d): pull dy out, h_indicator, Σ kh kw collapse: ~100 LOC.
+
+**Total: ~400-600 LOC.** Time estimate: 4-6 focused hours.
+
+### When to pick Phase 6b back up
+
+The right time:
+- A clean ~half-day window (similar to Phase 1).
+- Phases 1-2's CNN.lean / Depthwise.lean recently reviewed.
+- Comfortable with Phase 1's pitfalls (1-7 below).
+
+After 6b lands: axiom count drops 5 → 4. The blueprint claim "verified
+ViT modulo subgradient conventions" becomes literal.
+
+---
+
+## Phase 2 axiom count summary (post-Phase-6a)
+
+Axiom count: **6 → 5**. The 5 remaining are:
+- 3 ReLU subgradient (`pdiv_relu`, `relu_has_vjp`, `mlp_has_vjp`)
+- 1 maxPool2 subgradient (`maxPool2_has_vjp3`)
+- 1 patchEmbed HasVJP (`patchEmbed_flat_has_vjp` — provable, deferred)
 
 ---
 
