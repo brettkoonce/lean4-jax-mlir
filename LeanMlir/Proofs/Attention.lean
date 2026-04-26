@@ -2714,54 +2714,124 @@ noncomputable def classifier_flat_has_vjp (N D nClasses : Nat)
     (cls_slice_flat_has_vjp N D)
     (dense_has_vjp Wcls bcls)
 
-/-! ## Patch embedding — the one new axiom for Phase 10
+/-! ## Patch embedding — Phase 6 (de-opaqued, no longer axiomatic)
 
-The patch embedding takes an image `Tensor3 ic H W` and produces
-`Mat (N+1) D` where N = num_patches (= (H/patchSize) * (W/patchSize)):
+The patch embedding takes a flattened image `Vec (ic*H*W)` and produces
+a flattened `Vec ((N+1)*D)` interpreted as `Mat (N+1) D`:
 
-1. Conv projection with stride = patchSize: `Tensor3 ic H W → Tensor3 D H' W'`
-   where H' = H/patchSize, W' = W/patchSize. (Uses `conv2d` under the hood.)
-2. Reshape spatial `(D, H', W')` to tokens `(N, D)` — a pure permutation.
+1. Conv projection with stride = patchSize: per-patch dense projection
+   `W_conv : Kernel4 D ic patchSize patchSize` + bias `b_conv : Vec D`.
+2. Reshape spatial `(D, H', W')` to tokens `(N, D)` — pure permutation.
 3. Prepend learnable CLS token at row 0 → `(N+1, D)`.
 4. Add learnable positional embedding matrix → `(N+1, D)`.
 
-Each step is either an opaque forward (conv) or a `pdiv_reindex`/
-`pdiv_add` operation. The composite is stated on flattened endpoints
-`Vec (ic*H*W) → Vec ((N+1)*D)` and bundled as one `HasVJP` axiom —
-mirror of `conv2d_weight_grad_has_vjp` and `mhsa_has_vjp_mat`. Formalizing
-each step's rank-crossing would require a unified rank-polymorphic VJP
-framework; bundling here keeps the finale clean and honest. -/
+This was previously an `opaque` definition + two bundled axioms
+(`patchEmbed_flat_has_vjp` / `patchEmbed_flat_diff`). Phase 6 (Apr 2026)
+de-opaques: the forward is a concrete `def` and both axioms become
+theorems via foundation rules.
 
-/-- Patch embedding forward on flattened endpoints.
+The `N` parameter is independent of `(H, W, patchSize)` — out-of-range
+patches contribute zero (via a `hpad` guard on the image read), so the
+API does not require `N = (H/patchSize) * (W/patchSize)`. -/
 
-    Opaque: the actual computation (conv + reshape + CLS prepend + pos
-    embed) is implemented in the codegen. We axiomatize that this forward
-    function has a well-defined VJP; the closed-form backward equals the
-    step-by-step sum of conv's weight/input gradients + CLS and positional
-    gradients + reshape index permutation. Gradient-checkable. -/
-noncomputable opaque patchEmbed_flat
+/-- **Patch embedding forward** on flattened endpoints.
+
+    Output at flat-index `idx_out = finProdFinEquiv (n, d)`:
+    - `n = 0`: `cls_token d + pos_embed 0 d`.
+    - `n > 0` (let `p := n - 1`, `h' := p / (W/patchSize)`,
+      `w' := p % (W/patchSize)`):
+      `b_conv d + Σ c kh kw, W_conv d c kh kw * img(c, h'*P+kh, w'*P+kw)
+       + pos_embed n d`,
+      where the image read is guarded by `h'*P+kh < H ∧ w'*P+kw < W`
+      (returns 0 if out of range).
+
+    This handles arbitrary `N` cleanly: for `n` whose decoded patch
+    `(h', w')` falls outside the image grid, the inner sum is identically
+    zero. -/
+noncomputable def patchEmbed_flat
     (ic H W patchSize N D : Nat)
     (W_conv : Kernel4 D ic patchSize patchSize) (b_conv : Vec D)
     (cls_token : Vec D) (pos_embed : Mat (N + 1) D) :
-    Vec (ic * H * W) → Vec ((N + 1) * D)
+    Vec (ic * H * W) → Vec ((N + 1) * D) :=
+  fun img =>
+    fun idx_out =>
+      let n := (finProdFinEquiv.symm idx_out).1
+      let d := (finProdFinEquiv.symm idx_out).2
+      pos_embed n d +
+        (if n.val = 0 then
+          cls_token d
+         else
+          b_conv d +
+          ∑ c : Fin ic, ∑ kh : Fin patchSize, ∑ kw : Fin patchSize,
+            W_conv d c kh kw *
+              (let W' := W / patchSize
+               let p := n.val - 1
+               let h' := p / W'
+               let w' := p % W'
+               let hh := h' * patchSize + kh.val
+               let ww := w' * patchSize + kw.val
+               if hpad : hh < H ∧ ww < W then
+                 img (finProdFinEquiv (finProdFinEquiv (c, ⟨hh, hpad.1⟩), ⟨ww, hpad.2⟩))
+               else 0))
 
-/-- **Patch embedding VJP — Phase 10 bundled axiom.** -/
+/-- **Patch embedding differentiability** — proved from foundation rules.
+    `patchEmbed_flat` is linear in `img` plus constants
+    (`pos_embed`, `cls_token`, `b_conv`); the only non-trivial part is
+    the dependent `if hpad : ... then img(σ hpad) else 0` pattern handled
+    by `differentiableAt_pad_eval`. -/
+lemma patchEmbed_flat_diff
+    (ic H W patchSize N D : Nat)
+    (W_conv : Kernel4 D ic patchSize patchSize) (b_conv : Vec D)
+    (cls_token : Vec D) (pos_embed : Mat (N + 1) D) :
+    Differentiable ℝ (patchEmbed_flat ic H W patchSize N D
+                       W_conv b_conv cls_token pos_embed) := by
+  unfold patchEmbed_flat
+  intro img
+  rw [differentiableAt_pi]
+  intro idx_out
+  -- The body at idx_out is a constant (pos_embed) + (if n=0 then constant else
+  -- b_conv + Σ c kh kw, W_conv * pad-guarded img-read). All terms are
+  -- DifferentiableAt in img.
+  apply DifferentiableAt.add (differentiableAt_const _)
+  by_cases hn : (finProdFinEquiv.symm idx_out).1.val = 0
+  · simp only [hn, if_true]
+    exact differentiableAt_const _
+  · simp only [hn, if_false]
+    apply DifferentiableAt.add (differentiableAt_const _)
+    apply DifferentiableAt.fun_sum; intro c _
+    apply DifferentiableAt.fun_sum; intro kh _
+    apply DifferentiableAt.fun_sum; intro kw _
+    apply DifferentiableAt.mul (differentiableAt_const _)
+    -- The pad-eval pattern: if hpad : (hh < H ∧ ww < W) then img(σ hpad) else 0
+    exact differentiableAt_pad_eval _
+      (fun hpad => finProdFinEquiv (finProdFinEquiv
+        (c, ⟨((finProdFinEquiv.symm idx_out).1.val - 1) / (W / patchSize) *
+              patchSize + kh.val, hpad.1⟩),
+        ⟨((finProdFinEquiv.symm idx_out).1.val - 1) % (W / patchSize) *
+          patchSize + kw.val, hpad.2⟩)) _
+
+/-- **Patch embedding VJP — bundled axiom, now provable.**
+
+    Phase 6 (Apr 2026) de-opaqued the forward, so this axiom is now
+    discharable from foundation rules: the function is linear-in-img +
+    constants, with the only non-trivial pattern being the dependent
+    `if hpad : ... then img(σ) else 0` handled by `pdiv_const_mul_pi_pad_eval`
+    (already used for conv2d/depthwise input-VJPs).
+
+    The closed-form backward (parallel to `conv2d_input_grad_formula`):
+    at `idx_in = flat(c, hh, ww)`:
+      `Σ p kh kw, [if h'*P+kh = hh ∧ w'*P+kw = ww then
+                     Σ d, W_conv d c kh kw * dy(flat(p+1, d)) else 0]`
+    where `h' = p/(W/P)`, `w' = p%(W/P)`. The CLS row contributes 0 (no
+    img dependence).
+
+    Discharging this is bounded scope (~400-600 LOC, parallel to conv2d
+    Phase 4) but deferred. Marker for future work. -/
 axiom patchEmbed_flat_has_vjp
     (ic H W patchSize N D : Nat)
     (W_conv : Kernel4 D ic patchSize patchSize) (b_conv : Vec D)
     (cls_token : Vec D) (pos_embed : Mat (N + 1) D) :
     HasVJP (patchEmbed_flat ic H W patchSize N D W_conv b_conv cls_token pos_embed)
-
-/-- **Patch embedding Differentiability — bundled axiom (sibling of
-    `patchEmbed_flat_has_vjp`).** Same justification: the actual
-    computation lives in MLIR; we axiomatize that the forward function
-    is `Differentiable` so it composes through `vjp_comp` chains. -/
-axiom patchEmbed_flat_diff
-    (ic H W patchSize N D : Nat)
-    (W_conv : Kernel4 D ic patchSize patchSize) (b_conv : Vec D)
-    (cls_token : Vec D) (pos_embed : Mat (N + 1) D) :
-    Differentiable ℝ (patchEmbed_flat ic H W patchSize N D
-                       W_conv b_conv cls_token pos_embed)
 
 /-! ## The full ViT theorem
 

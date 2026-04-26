@@ -1,8 +1,11 @@
-# VJP.md — Foundation Flip Landed; Floor at 6 Axioms After Phase 5
+# VJP.md — Foundation Flip Landed; Floor at 5 Axioms After Phase 6a
 
 **Branches:** `attention-diff-threading` + `colslab-vmap-framework`.
-Cumulative: **23 → 6 project axioms** (7 → 6 from Phase 5 —
-`depthwise_has_vjp3` no longer axiomatic).
+Cumulative: **23 → 5 project axioms** (6 → 5 from Phase 6a —
+`patchEmbed_flat` de-opaqued, `patchEmbed_flat_diff` proved). The
+remaining `patchEmbed_flat_has_vjp` axiom is now provable from
+foundation rules (the forward is concrete) but the closed-form proof
+(~400-600 LOC, parallel to conv2d Phase 4) is deferred to Phase 6b.
 
 > **Strategy summary.** Foundation flip (attempt #3, "guarded ReLU") landed
 > on `main` and preserved the soundness analysis from attempts #1 and #2
