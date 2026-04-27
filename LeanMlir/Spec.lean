@@ -226,7 +226,7 @@ def Layer.nParams : Layer → Nat
       let projOut   := dim * ic + 2 * ic
       let fusion    := 18 * ic * ic + 2 * ic
       localConv + projIn + txParams + projOut + fusion
-  | .convNextStage channels nBlocks =>
+  | .convNextStage channels nBlocks _ _ =>
       -- Per block:
       --   DWConv 7×7 (depthwise):     49·c + c       — 50·c
       --   LayerNorm (γ, β):           2·c
@@ -236,7 +236,7 @@ def Layer.nParams : Layer → Nat
       -- Total per block ≈ 8·c² + 58·c
       let c := channels
       nBlocks * (8 * c * c + 58 * c)
-  | .convNextDownsample ic oc =>
+  | .convNextDownsample ic oc _ =>
       -- LayerNorm on ic channels + 2×2 conv stride-2 (ic → oc) with bias
       2 * ic + 4 * ic * oc + oc
   | .waveNetBlock residualCh skipCh nLayers =>
@@ -346,7 +346,7 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .dense fi fo act           =>
       let a := match act with
         | .relu => ",ReLU" | .relu6 => ",ReLU6" | .identity => ""
-        | .swish => ",Swish" | .hSwish => ",HSwish"
+        | .swish => ",Swish" | .hSwish => ",HSwish" | .gelu => ",GELU"
       s!"{fi}→{fo}{a}"
     | .residualBlock ic oc n fs   => s!"Res{n}({ic}→{oc},s{fs})"
     | .bottleneckBlock ic oc n fs => s!"BN{n}({ic}→{oc},s{fs})"
@@ -355,12 +355,12 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .mbConv ic oc e k s n useSE act  =>
       let a := match act with
         | .relu => "" | .relu6 => ",ReLU6" | .identity => ",Id"
-        | .swish => ",Swish" | .hSwish => ",HSwish"
+        | .swish => ",Swish" | .hSwish => ",HSwish" | .gelu => ",GELU"
       s!"MB{n}({ic}→{oc},e{e},k{k},s{s}" ++ (if useSE then ",SE" else "") ++ a ++ ")"
     | .mbConvV3 ic oc exp k s useSE act =>
       let a := match act with
         | .relu => ",RE" | .relu6 => ",RE6" | .identity => ",Id"
-        | .swish => ",Swish" | .hSwish => ",HS"
+        | .swish => ",Swish" | .hSwish => ",HS" | .gelu => ",GELU"
       s!"V3({ic}→{oc},{exp},k{k},s{s}" ++
         (if useSE then ",SE" else "") ++ a ++ ")"
     | .fusedMbConv ic oc e k s n useSE => s!"FMB{n}({ic}→{oc},e{e},k{k},s{s}" ++ (if useSE then ",SE" else "") ++ ")"
@@ -382,8 +382,8 @@ def NetSpec.archStr (s : NetSpec) : String :=
     | .evoformerBlock cm cz n    => s!"Evoformer{n}(msa={cm},pair={cz})"
     | .structureModule cs cz n   => s!"StructMod{n}(s={cs},z={cz})"
     | .mobileVitBlock ic d h m n => s!"MobileViT(ic={ic},d={d},h={h},mlp={m},L={n})"
-    | .convNextStage c n         => s!"ConvNeXt{n}(c={c})"
-    | .convNextDownsample i o    => s!"CNXDown({i}→{o})"
+    | .convNextStage c n _ _     => s!"ConvNeXt{n}(c={c})"
+    | .convNextDownsample i o _   => s!"CNXDown({i}→{o})"
     | .waveNetBlock r s n        => s!"WaveNet{n}(res={r},skip={s})"
     | .positionalEncoding d L    => s!"PE({d}→{d * 2 * L},L={L})"
     | .nerfMLP eP eD h           => s!"NeRF-MLP(p={eP},d={eD},h={h})"
@@ -426,8 +426,8 @@ def Layer.outChannels : Layer → Nat
   | .evoformerBlock msaCh _ _       => msaCh  -- MSA channels as the "main" dim
   | .structureModule sCh _ _        => sCh    -- single-repr channels
   | .mobileVitBlock ic _ _ _ _      => ic     -- block is ic → ic
-  | .convNextStage c _              => c      -- stage preserves channels
-  | .convNextDownsample _ oc        => oc
+  | .convNextStage c _ _ _          => c      -- stage preserves channels
+  | .convNextDownsample _ oc _      => oc
   | .waveNetBlock _ skipCh _        => skipCh     -- skip-sum is what flows to the head
   | .positionalEncoding inputDim numFreq => inputDim * 2 * numFreq
   | .nerfMLP _ _ _                  => 4    -- 1-dim density + 3-dim RGB (flattened)
@@ -466,8 +466,8 @@ def Layer.inChannels : Layer → Nat
   | .evoformerBlock msaCh _ _       => msaCh
   | .structureModule sCh _ _        => sCh
   | .mobileVitBlock ic _ _ _ _      => ic
-  | .convNextStage c _              => c
-  | .convNextDownsample ic _        => ic
+  | .convNextStage c _ _ _          => c
+  | .convNextDownsample ic _ _      => ic
   | .waveNetBlock residualCh _ _    => residualCh
   | .positionalEncoding inputDim _  => inputDim
   | .nerfMLP encodedPosDim _ _      => encodedPosDim

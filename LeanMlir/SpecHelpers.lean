@@ -97,6 +97,20 @@ def paramShapes (spec : NetSpec) : Array (Array Nat) := Id.run do
       if postDWk > 0 then
         shapes := shapes.push #[mid, 1, postDWk, postDWk] |>.push #[mid] |>.push #[mid]
       shapes := shapes.push #[oc, mid, 1, 1] |>.push #[oc] |>.push #[oc]
+    | .convNextStage channels nBlocks _norm _act =>
+      -- Per ConvNeXt block: DWConv 7×7 (W, b) + Norm (γ, β) +
+      -- 1×1 expand (W, b, c→4c) + 1×1 project (W, b, 4c→c) + LayerScale (γ).
+      let c := channels
+      for _ in [:nBlocks] do
+        shapes := shapes.push #[c, 1, 7, 7] |>.push #[c]
+        shapes := shapes.push #[c] |>.push #[c]
+        shapes := shapes.push #[4*c, c, 1, 1] |>.push #[4*c]
+        shapes := shapes.push #[c, 4*c, 1, 1] |>.push #[c]
+        shapes := shapes.push #[c]
+    | .convNextDownsample ic oc _norm =>
+      -- LN/BN (γ, β) on `ic` channels, then 2×2 conv stride 2 (W, b).
+      shapes := shapes.push #[ic] |>.push #[ic]
+      shapes := shapes.push #[oc, ic, 2, 2] |>.push #[oc]
     | .patchEmbed ic dim p nP =>
       shapes := shapes.push #[dim, ic, p, p] |>.push #[dim]    -- W, b
       shapes := shapes.push #[dim]                              -- cls token

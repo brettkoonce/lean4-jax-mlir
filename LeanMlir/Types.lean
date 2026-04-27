@@ -6,6 +6,15 @@ inductive Activation where
   | identity
   | swish
   | hSwish
+  | gelu
+deriving Repr, BEq
+
+/-- Normalization choice — picked at the block level by primitives that
+    can run with either LayerNorm or BatchNorm (e.g. ConvNeXt, in its
+    original LN form or a hypothetical BN variant for ablation). -/
+inductive Normalization where
+  | bn
+  | ln
 deriving Repr, BEq
 
 inductive Padding where
@@ -102,11 +111,17 @@ inductive Layer where
   -- at fixed `channels`. Each block: 7×7 depthwise conv + LN + 1×1
   -- expand (×4) + GELU + 1×1 project + residual skip.
   -- Does NOT include downsampling; see `convNextDownsample` for that.
+  -- The `norm` field selects LayerNorm (default, paper) vs BatchNorm;
+  -- the `act` field selects GELU (default, paper) vs ReLU/etc. Both
+  -- defaults reproduce the Liu et al. recipe.
   | convNextStage (channels nBlocks : Nat)
+                  (norm : Normalization := .ln) (act : Activation := .gelu)
   -- ConvNeXt inter-stage downsample: LayerNorm + 2×2 conv stride 2
   -- (ic → oc). Separated from the residual blocks, following the paper's
   -- design choice (point 8 of Liu et al.'s modernization recipe).
-  | convNextDownsample (ic oc : Nat)
+  -- The `norm` field selects LN (default) vs BN; same purpose as in
+  -- `convNextStage` so a stage and its downsample stay in sync.
+  | convNextDownsample (ic oc : Nat) (norm : Normalization := .ln)
   -- WaveNet (van den Oord 2016) residual-block stack with exponentially
   -- growing dilation. One stack = `nLayers` blocks with dilation rates
   -- 2⁰, 2¹, ..., 2^(nLayers−1). Per block: dilated causal conv + gated

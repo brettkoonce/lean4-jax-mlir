@@ -139,6 +139,22 @@ private def emitActForward (act : Activation) (tag inSSA : String) (shape : List
              s!"    %act_div{tag} = stablehlo.divide %act_r6{tag}, %act_six{tag} : {ty}\n" ++
              s!"    %act_o{tag} = stablehlo.multiply {inSSA}, %act_div{tag} : {ty}\n"
     return (s, s!"%act_o{tag}")
+  | .gelu =>
+    -- GELU tanh approximation: 0.5·x·(1 + tanh(√(2/π)·(x + 0.044715·x³)))
+    let s := s!"    %act_05{tag} = stablehlo.constant dense<0.5> : {ty}\n" ++
+             s!"    %act_one{tag} = stablehlo.constant dense<1.0> : {ty}\n" ++
+             s!"    %act_c{tag} = stablehlo.constant dense<0.7978845608028654> : {ty}\n" ++
+             s!"    %act_k{tag} = stablehlo.constant dense<0.044715> : {ty}\n" ++
+             s!"    %act_x2{tag} = stablehlo.multiply {inSSA}, {inSSA} : {ty}\n" ++
+             s!"    %act_x3{tag} = stablehlo.multiply %act_x2{tag}, {inSSA} : {ty}\n" ++
+             s!"    %act_kx3{tag} = stablehlo.multiply %act_x3{tag}, %act_k{tag} : {ty}\n" ++
+             s!"    %act_inner{tag} = stablehlo.add {inSSA}, %act_kx3{tag} : {ty}\n" ++
+             s!"    %act_u{tag} = stablehlo.multiply %act_inner{tag}, %act_c{tag} : {ty}\n" ++
+             s!"    %act_t{tag} = stablehlo.tanh %act_u{tag} : {ty}\n" ++
+             s!"    %act_op1{tag} = stablehlo.add %act_one{tag}, %act_t{tag} : {ty}\n" ++
+             s!"    %act_hx{tag} = stablehlo.multiply {inSSA}, %act_05{tag} : {ty}\n" ++
+             s!"    %act_o{tag} = stablehlo.multiply %act_hx{tag}, %act_op1{tag} : {ty}\n"
+    return (s, s!"%act_o{tag}")
 
 /-- Emit a conv2d + bias + activation block. Returns (code, newSSA, newShape).
     Assumes NCHW input [b, ic, h, w], produces [b, oc, h, w] for SAME padding,
@@ -194,6 +210,9 @@ private def emitConv2d (pidx : Nat) (curSSA : String) (curShape : List Nat)
       s := s ++ s!"    %chd_{pidx} = stablehlo.divide %chr_{pidx}, %ch6_{pidx} : {ty}\n"
       s := s ++ s!"    %chsw_{pidx} = stablehlo.multiply %cva{pidx}, %chd_{pidx} : {ty}\n"
       return (s, s!"%chsw_{pidx}", newShape)
+    | .gelu =>
+      let (sa, oa) := emitActForward .gelu s!"_cv{pidx}" s!"%cva{pidx}" newShape
+      return (s ++ sa, oa, newShape)
   | _ => return ("    // conv2d error: expected rank-4 NCHW shape\n", curSSA, curShape)
 
 /-- Emit convBn: conv (possibly strided) + instance norm + optional ReLU.
@@ -1087,6 +1106,9 @@ private def emitDense (pidx : Nat) (curSSA : String) (batchSize fanIn fanOut : N
     s := s ++ s!"    %dhd_{pidx} = stablehlo.divide %dhr_{pidx}, %dh6_{pidx} : {bTy}\n"
     s := s ++ s!"    %dhsw_{pidx} = stablehlo.multiply %ab{pidx}, %dhd_{pidx} : {bTy}\n"
     return (s, s!"%dhsw_{pidx}")
+  | .gelu =>
+    let (sa, oa) := emitActForward .gelu s!"_d{pidx}" s!"%ab{pidx}" [batchSize, fanOut]
+    return (s ++ sa, oa)
 
 /-- Emit the `@forward` function body walking layers in order. -/
 private def emitForwardBody (spec : NetSpec) (batchSize : Nat) (fixedBN : Bool := false) : String := Id.run do
