@@ -2892,11 +2892,91 @@ EfficientNet-B0  &  7.16M  & 938 KB   &  940 ms   & 6.2 h   & 87.58\% \\
 Every post-2018 vision architecture has some variant of SE in it
 (MobileNet V3, EfficientNetV2, ConvNeXt, RegNetZ) because the
 accuracy-per-parameter cost is low when you compound it with other
-scaling tricks. The Swish / SiLU activation --- another EfficientNet
-contribution --- is orthogonal and not shown in our spec; our
-\texttt{.mbConv} primitive approximates with ReLU for implementation
-simplicity. The numbers above are within noise of the Swish variant
-at this scale.
+scaling tricks. The other architectural contribution
+EfficientNet shipped --- the \emph{Swish} activation
+$\mathrm{swish}(x) = x \cdot \sigma(x)$ --- is orthogonal to SE and
+worth measuring on its own. The next section ablates it directly.
+
+\section{Ablation: Swish vs ReLU activation}
+\label{sec:enet_swish_ablation}
+
+The original EfficientNet paper (Tan \& Le 2019) claims roughly a
+$0.6$-point ImageNet lift from switching ReLU $\to$ Swish at the B0
+baseline. The interesting question is whether that lift survives at
+the Imagenette scale (10 classes, 9469 training images), where the
+model's capacity ceiling is much closer to its random-init floor.
+
+\subsection*{The proof side}
+
+Both activations follow the same diagonal-Jacobian template as ReLU
+and GELU --- elementwise scalar function, $\pdiv$ collapses to a
+single coordinate. \texttt{swish\_has\_vjp\_correct} (in
+\texttt{Proofs/LayerNorm.lean}) is proved against Mathlib's
+\(\fderiv\): the denominator $1 + e^{-x}$ is bounded below by 1, so
+\texttt{swishScalar} is smooth everywhere and \texttt{fun\_prop}
+discharges differentiability automatically. The closed-form
+derivative is $\sigma(x) \cdot (1 + x \cdot (1 - \sigma(x)))$; the
+codegen emits \texttt{stablehlo.logistic + multiply} for forward
+and the closed-form derivative for backward.
+\texttt{\#print axioms swish\_has\_vjp\_correct} confirms only the
+three Lean core axioms (\texttt{propext}, \texttt{Quot.sound},
+\texttt{Classical.choice}) --- no project axioms.
+
+\subsection*{The empirical side}
+
+Two configs in \texttt{MainAblation.lean}, identical except for the
+\texttt{.act} field on every \texttt{.mbConv} block:
+
+\begin{verbatim}
+def enetB0SwishSpec : NetSpec where
+  ...
+  .mbConv  32  16 1 3 1 1 true (act := .swish),
+  ...
+
+def enetB0ReluSpec : NetSpec where
+  ...
+  .mbConv  32  16 1 3 1 1 true (act := .relu),
+  ...
+\end{verbatim}
+
+Same init seed, batch order, optimizer (Adam @ 0.001), cosine
+schedule, warmup, augmentation, label smoothing. 80 epochs each.
+Run with \texttt{./.lake/build/bin/ablation enet-b0-swish} and
+\texttt{enet-b0-relu}.
+
+\begin{center}
+\begin{tabular}{l r r}
+\hline
+Run                          & Val accuracy & $\Delta$ vs Swish \\
+\hline
+\texttt{enet-b0-swish}       & ??.??\%      & --- \\
+\texttt{enet-b0-relu}        & ??.??\%      & ?? \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{TODO: fill in numbers from
+\texttt{logs/ablation\_enet-b0-swish.log} and
+\texttt{logs/ablation\_enet-b0-relu.log}} once both runs complete.
+
+What the codegen emits per activation site:
+
+\begin{center}
+\begin{tabular}{l l}
+\hline
+\texttt{.swish} & \texttt{logistic + multiply} (smooth, two ops)\\
+\texttt{.relu}  & \texttt{maximum} against constant 0 (one op)\\
+\hline
+\end{tabular}
+\end{center}
+
+So a Swish lift, if real at this scale, costs you a small amount of
+per-step wall clock for whatever accuracy bump it earns. If the lift
+is in the noise (?? $\le$ 0.5 points), the takeaway is that Swish
+matters more at ImageNet scale than at Imagenette scale, which is
+the standard story for activation-function tweaks: they get
+swamped by larger sources of variance (init, augmentation, schedule)
+on smaller datasets.
 
 \chapter{LayerNorm and GELU}
 \label{chap:layernorm}
