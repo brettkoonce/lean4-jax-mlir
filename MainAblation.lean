@@ -434,6 +434,65 @@ def r34Bare : TrainConfig where
   labelSmoothing := 0.0
 
 -- ═══════════════════════════════════════════════════════════════════
+-- Chapter 8: EfficientNet-B0 Imagenette — Swish vs ReLU activation
+-- ablation. The "show, don't tell" answer to "what does Swish buy us?"
+--
+-- Two configs sharing init seed + batch order + recipe:
+--   enet-b0-swish: default Swish in every MBConv block (current B0).
+--   enet-b0-relu : same architecture, all MBConv activations forced to
+--                  ReLU. Measures the activation-function lift in
+--                  isolation.
+-- ═══════════════════════════════════════════════════════════════════
+
+def enetB0SwishSpec : NetSpec where
+  name := "EfficientNet-B0-Swish"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .convBn 3 32 3 2 .same,
+    .mbConv  32  16 1 3 1 1 true (act := .swish),
+    .mbConv  16  24 6 3 2 2 true (act := .swish),
+    .mbConv  24  40 6 5 2 2 true (act := .swish),
+    .mbConv  40  80 6 3 2 3 true (act := .swish),
+    .mbConv  80 112 6 5 1 3 true (act := .swish),
+    .mbConv 112 192 6 5 2 4 true (act := .swish),
+    .mbConv 192 320 6 3 1 1 true (act := .swish),
+    .convBn 320 1280 1 1 .same,
+    .globalAvgPool,
+    .dense 1280 10 .identity
+  ]
+
+def enetB0ReluSpec : NetSpec where
+  name := "EfficientNet-B0-ReLU"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .convBn 3 32 3 2 .same,
+    .mbConv  32  16 1 3 1 1 true (act := .relu),
+    .mbConv  16  24 6 3 2 2 true (act := .relu),
+    .mbConv  24  40 6 5 2 2 true (act := .relu),
+    .mbConv  40  80 6 3 2 3 true (act := .relu),
+    .mbConv  80 112 6 5 1 3 true (act := .relu),
+    .mbConv 112 192 6 5 2 4 true (act := .relu),
+    .mbConv 192 320 6 3 1 1 true (act := .relu),
+    .convBn 320 1280 1 1 .same,
+    .globalAvgPool,
+    .dense 1280 10 .identity
+  ]
+
+-- Standard EfficientNet-B0 recipe (matches MainEfficientNetTrain.lean).
+def enetB0Config : TrainConfig where
+  learningRate := 0.001
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 3
+  augment      := true
+  labelSmoothing := 0.1
+
+-- ═══════════════════════════════════════════════════════════════════
 -- Ablation registry
 -- ═══════════════════════════════════════════════════════════════════
 
@@ -522,7 +581,13 @@ def ablations : List (String × AblationRun) := [
   ("r34-no-wd",     ⟨resnet34Spec, r34NoWd,     .imagenette, "data/imagenette"⟩),
   ("r34-no-smooth", ⟨resnet34Spec, r34NoSmooth, .imagenette, "data/imagenette"⟩),
   ("r34-no-aug",    ⟨resnet34Spec, r34NoAug,    .imagenette, "data/imagenette"⟩),
-  ("r34-bare",      ⟨resnet34Spec, r34Bare,     .imagenette, "data/imagenette"⟩)
+  ("r34-bare",      ⟨resnet34Spec, r34Bare,     .imagenette, "data/imagenette"⟩),
+
+  -- Chapter 8: EfficientNet-B0 activation ablation. Swish (default) vs
+  -- ReLU. Same recipe as r34-full to factor out optimizer/schedule
+  -- effects; the only knob varied is the MBConv activation function.
+  ("enet-b0-swish", ⟨enetB0SwishSpec, enetB0Config, .imagenette, "data/imagenette"⟩),
+  ("enet-b0-relu",  ⟨enetB0ReluSpec,  enetB0Config, .imagenette, "data/imagenette"⟩)
 ]
 
 def main (args : List String) : IO Unit := do
