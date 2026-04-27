@@ -792,7 +792,7 @@ two things:
   $\mathrm{backward}(v)_j = \sum_i v_i \cdot \pdiv\, f\, x\, i\, j$,
   i.e. that the function really does compute $v^T J_f$.
 \end{itemize}
-In Lean that's exactly four lines:
+In Lean that's exactly three lines:
 \begin{verbatim}
 structure HasVJP (f : Vec m → Vec n) where
   backward : Vec m → Vec n → Vec m
