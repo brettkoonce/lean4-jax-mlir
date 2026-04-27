@@ -704,6 +704,38 @@ benefit is that every claim downstream of this chapter is either
 a definition Lean unfolds or a theorem typechecked against
 Mathlib --- no thumb on the scale.
 
+\subsubsection*{What about non-smooth points?}
+
+A reader who has met ReLU will have spotted a gap. ReLU is
+$\max(0, x)$, which has no derivative at $x=0$; absolute value
+flunks the same test for the same reason; maxPool over a window
+has no derivative when two entries tie. Mathlib's \(\fderiv\)
+correctly declines to return a value at these points, but ML
+frameworks have to return \emph{something}, so they all pick a
+convention. PyTorch and JAX both use $0$ as ReLU's subgradient at
+the kink and break maxPool ties by the lowest index.
+Those choices aren't theorems --- they're conventions that make
+backprop computable everywhere.
+
+We make those conventions formal. For a non-smooth $f$, we don't
+try to prove a closed-form \(\HasVJP\) from \(\fderiv\) (which would
+fail at the singular set). Instead we define the \(\HasVJP\) directly,
+with backward function
+$\mathrm{backward}(x, dy)_i := \sum_j \pdiv\, f\, x\, i\, j \cdot dy_j$.
+The \texttt{correct} field then holds by \texttt{rfl} --- by
+definition, that's exactly what \texttt{backward} computes. Wherever
+$f$ \emph{is} smooth, \(\pdiv\) agrees with \(\fderiv\) (proved);
+at the non-smooth points, \(\pdiv\) takes the standard convention by
+definition. We call this the \emph{canonical pdiv-derived witness}
+pattern, and it shows up by name in the next few chapters for ReLU,
+maxPool, and the depthwise input VJP.
+
+The codegen then substitutes the same subgradient/argmax convention
+every framework already uses. The benefit isn't a different numerical
+result --- it's a paper trail that says ``yes, we know exactly which
+choice we made at each non-smooth point, and the typechecker has
+verified the algebra around it.''
+
 \subsection*{Why VJPs, not Jacobians?}
 
 If you've taken multivariable calculus, the natural object to track
