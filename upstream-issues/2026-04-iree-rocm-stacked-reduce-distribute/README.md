@@ -1,5 +1,7 @@
 # IREE/HIP `failed to distribute` for stacked `[0, 2, 3]` reductions in BN backward
 
+**Filed upstream:** [iree-org/iree#24282](https://github.com/iree-org/iree/issues/24282)
+
 ## Summary
 
 A function containing four `reduce(..., dimensions = [0, 2, 3])` ops on

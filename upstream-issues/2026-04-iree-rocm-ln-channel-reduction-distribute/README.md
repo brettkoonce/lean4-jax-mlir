@@ -1,5 +1,7 @@
 # IREE/HIP `failed to distribute` on LayerNorm-over-channels of NCHW
 
+**Filed upstream:** [iree-org/iree#24283](https://github.com/iree-org/iree/issues/24283)
+
 ## Summary
 
 A straightforward LayerNorm computed over the channel axis of an NCHW
