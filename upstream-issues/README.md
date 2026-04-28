@@ -5,10 +5,10 @@ dependencies while developing this project. Each subfolder is one bug,
 dated by when we filed it, with a minimal repro script, full
 environment info, and a GDB backtrace where we have one.
 
-The common theme: **JAX 0.9.2 + ROCm 7.2 + gfx1100 (Radeon RX 7900
-XTX)**. None of the bugs here are our code. They're filed upstream,
-reproduced locally, and the workaround for each is documented in the
-relevant folder's README.
+The common themes: **JAX 0.9.2 + ROCm 7.2 + gfx1100 (Radeon RX 7900
+XTX)** and **IREE 3.11.0rc + ROCm/HIP + gfx1100**. None of the bugs
+here are our code. They're filed upstream, reproduced locally, and
+the workaround for each is documented in the relevant folder's README.
 
 ## Currently open
 
@@ -17,6 +17,8 @@ relevant folder's README.
 | [`2026-04-rocm-miopen-conv-segv/`](2026-04-rocm-miopen-conv-segv/) | [ROCm/MIOpen#3955](https://github.com/ROCm/MIOpen/issues/3955) | `JAX_PLATFORMS=cpu` for conv workloads on gfx1100 |
 | [`2026-04-jax-jit-conv-backward-segv/`](2026-04-jax-jit-conv-backward-segv/) | [ROCm/jax#745](https://github.com/ROCm/jax/issues/745) | `JAX_DISABLE_JIT=1` (eager mode, ~15× slower) |
 | [`2026-04-jax-rocm-multigpu-mesh-hang/`](2026-04-jax-rocm-multigpu-mesh-hang/) | [ROCm/jax#746](https://github.com/ROCm/jax/issues/746) | `ROCR_VISIBLE_DEVICES=0` (single GPU) |
+| [`2026-04-iree-rocm-ln-channel-reduction-distribute/`](2026-04-iree-rocm-ln-channel-reduction-distribute/) | (to file at iree-org/iree) | Pre-transpose NCHW → NHWC so LN's reduce lands on the inner axis |
+| [`2026-04-iree-rocm-stacked-reduce-distribute/`](2026-04-iree-rocm-stacked-reduce-distribute/) | (to file at iree-org/iree) | Split each `reduce[0,2,3]` into two-step `[2,3]` then `[0]` |
 
 ## Overview of each
 
@@ -41,6 +43,20 @@ case the two turn out to be separate fixes.
 indefinitely during XLA compile for every model (even trivial MLP).
 Single-GPU works fine; multi-GPU with no sharding works fine. The
 hang is specifically the Mesh sharding pass.
+
+**iree-org/iree (LN channel-axis reduction).** A LayerNorm computed
+over the channel axis of an NCHW tensor (`reduce(..., dimensions=[1])`
+on `tensor<BxCxHxW>`) fails the `Distribute` pass for the HIP backend
+on gfx1100. The same MLIR compiles cleanly for `llvm-cpu`. ConvNeXt
+and any other channels-first LN architecture hits this. 60-line
+reproducer.
+
+**iree-org/iree (stacked `[0,2,3]` reductions).** Four
+`reduce(..., dimensions=[0, 2, 3])` ops in one function — the natural
+shape of BatchNorm's three-term backward — followed by the dx rebuild
+chain fails the `Distribute` pass for HIP. Single such reduction
+compiles fine (this is what `convBn` has emitted for years). 70-line
+reproducer.
 
 ## Why these are here, not just in GitHub issues
 
