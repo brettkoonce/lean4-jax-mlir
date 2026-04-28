@@ -31,7 +31,7 @@ def convNextTiny : NetSpec where
 
 def convNextTinyConfig : TrainConfig where
   learningRate := 0.001
-  batchSize    := 8
+  batchSize    := 32
   epochs       := 80
   useAdam      := true
   weightDecay  := 0.0001
