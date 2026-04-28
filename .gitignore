@@ -13,9 +13,10 @@ blueprint/src/*.out
 blueprint/src/*.toc
 blueprint/src/*.pdf
 
-# Training logs — ignore at root, curated ones live under logs/
+# Training logs — ignore at root, curated ones live under logs/ or runs/
 *.log
 !logs/*.log
+!runs/**/*.log
 
 # Documents
 *.docx
