@@ -24,8 +24,16 @@ lake build LeanMlir
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install iree-base-compiler
+pip install -f https://iree.dev/pip-release-links.html --pre \
+    'iree-base-compiler>=3.12.0rc20260428'
 ```
+
+The `>=3.12.0rc20260428` pin is the first nightly that includes the two
+ROCm/HIP `Distribute`-pass fixes we hit while landing ConvNeXt
+([iree-org/iree#24282](https://github.com/iree-org/iree/issues/24282) and
+[#24283](https://github.com/iree-org/iree/issues/24283)). Earlier 3.11.0
+nightlies fail to compile the LN-NCHW + stacked-`[0,2,3]` reduction
+patterns the codegen emits.
 
 Verify:
 ```bash

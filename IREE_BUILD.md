@@ -17,7 +17,7 @@ were hit) lives in [`IREE.md`](IREE.md). The ROCm-specific variant is in
 | Thing | Why | How |
 |---|---|---|
 | Lean 4.29.0 | builds the trainer | `elan` (see main README §1) |
-| `iree-compile` | Lean shells out to it to lower StableHLO → `.vmfb` | `pip install iree-base-compiler` |
+| `iree-compile` | Lean shells out to it to lower StableHLO → `.vmfb` | `pip install 'iree-base-compiler>=3.12.0rc20260428'` |
 | IREE runtime (static `.a`) | linked into `libiree_ffi.so` | build from source, runtime-only |
 | GPU toolchain | runtime needs a backend | CUDA toolkit *or* ROCm 6.x |
 | `ffi/libiree_ffi.so` | every Lean trainer links `-liree_ffi` | the link command in §4 |
@@ -28,11 +28,19 @@ were hit) lives in [`IREE.md`](IREE.md). The ROCm-specific variant is in
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install iree-base-compiler cmake ninja
+pip install -f https://iree.dev/pip-release-links.html --pre \
+    'iree-base-compiler>=3.12.0rc20260428' cmake ninja
 iree-compile --version
 cmake --version
 ninja --version
 ```
+
+The `>=3.12.0rc20260428` pin is the first nightly with two distribute-pass
+fixes we hit while landing ConvNeXt
+([iree-org/iree#24282](https://github.com/iree-org/iree/issues/24282) and
+[#24283](https://github.com/iree-org/iree/issues/24283)). Older 3.11.0
+nightlies will fail iree-compile on the LN-NCHW or stacked-`[0,2,3]`
+reduction patterns the codegen emits.
 
 `cmake` and `ninja` are only needed for §2 (building the IREE runtime). If
 your distro already ships recent versions on `PATH` you can skip them, but

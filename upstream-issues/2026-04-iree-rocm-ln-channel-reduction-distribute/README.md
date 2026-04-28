@@ -2,6 +2,8 @@
 
 **Filed upstream:** [iree-org/iree#24283](https://github.com/iree-org/iree/issues/24283)
 
+**Status: Fixed.** Confirmed fixed. Tested with `iree-base-compiler 3.12.0rc20260428 @ af030e43d8343263a6c869eae32f958f229ff7af`. Same MLIR previously failed on `3.11.0rc20260316 @ e4a3b0405d7d23554da26403658d0e8c3c5ecf25` (Mar 16); the fix landed somewhere in `e4a3b04…af030e4`.
+
 ## Summary
 
 A straightforward LayerNorm computed over the channel axis of an NCHW
