@@ -3101,6 +3101,7 @@ private def emitConvBnMomentum (p ic oc kSize : Nat) (applyWeightDecay : Bool :=
 private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : String)
     (labelSmoothing : Float := 0.1) (weightDecay : Float := 0.0001) (useAdam : Bool := true)
     (useSoftLabels : Bool := false)
+    (useFocal : Bool := false) (focalGamma : Float := 2.0)
     : String := Id.run do
   let B := batchSize
   let nClasses := spec.numClasses
@@ -4067,11 +4068,32 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
     code := code ++ s!"    %zerof = stablehlo.constant dense<{smoothOff}> : {tensorTy [B, NC]}\n"
     code := code ++ s!"    %onehot = stablehlo.select %mask, %onef, %zerof : {i1Ty}, {tensorTy [B, NC]}\n"
   code := code ++ s!"    %weighted = stablehlo.multiply %log_p, {onehotSSA} : {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %total = stablehlo.reduce(%weighted init: %zf) applies stablehlo.add across dimensions = [0, 1]\n"
-  code := code ++ s!"           : ({tensorTy [B, NC]}, tensor<f32>) -> tensor<f32>\n"
   code := code ++ s!"    %Bc = stablehlo.constant dense<{B}.0> : tensor<f32>\n"
-  code := code ++ s!"    %mean = stablehlo.divide %total, %Bc : tensor<f32>\n"
-  code := code ++ s!"    %loss = stablehlo.negate %mean : tensor<f32>\n"
+  if useFocal then
+    -- Focal loss: -(1-p_y)^γ · log(p_y). Compute per-sample log_p_y first
+    -- (via the existing %weighted = log_p · onehot reduced along NC), then
+    -- p_y = exp(log_p_y), focal_factor = exp(γ · log(1-p_y)).
+    code := code ++ s!"    %log_p_y = stablehlo.reduce(%weighted init: %zf) applies stablehlo.add across dimensions = [1]\n"
+    code := code ++ s!"           : ({tensorTy [B, NC]}, tensor<f32>) -> {tensorTy [B]}\n"
+    code := code ++ s!"    %p_y = stablehlo.exponential %log_p_y : {tensorTy [B]}\n"
+    code := code ++ s!"    %onef_b = stablehlo.constant dense<1.0> : {tensorTy [B]}\n"
+    code := code ++ s!"    %omp_y = stablehlo.subtract %onef_b, %p_y : {tensorTy [B]}\n"
+    code := code ++ s!"    %eps_b = stablehlo.constant dense<1.0e-7> : {tensorTy [B]}\n"
+    code := code ++ s!"    %omp_clamped = stablehlo.maximum %omp_y, %eps_b : {tensorTy [B]}\n"
+    code := code ++ s!"    %log_omp = stablehlo.log %omp_clamped : {tensorTy [B]}\n"
+    code := code ++ s!"    %gamma_b = stablehlo.constant dense<{focalGamma}> : {tensorTy [B]}\n"
+    code := code ++ s!"    %g_log_omp = stablehlo.multiply %gamma_b, %log_omp : {tensorTy [B]}\n"
+    code := code ++ s!"    %focal_factor = stablehlo.exponential %g_log_omp : {tensorTy [B]}\n"
+    code := code ++ s!"    %focal_per = stablehlo.multiply %focal_factor, %log_p_y : {tensorTy [B]}\n"
+    code := code ++ s!"    %total = stablehlo.reduce(%focal_per init: %zf) applies stablehlo.add across dimensions = [0]\n"
+    code := code ++ s!"           : ({tensorTy [B]}, tensor<f32>) -> tensor<f32>\n"
+    code := code ++ s!"    %mean = stablehlo.divide %total, %Bc : tensor<f32>\n"
+    code := code ++ s!"    %loss = stablehlo.negate %mean : tensor<f32>\n"
+  else
+    code := code ++ s!"    %total = stablehlo.reduce(%weighted init: %zf) applies stablehlo.add across dimensions = [0, 1]\n"
+    code := code ++ s!"           : ({tensorTy [B, NC]}, tensor<f32>) -> tensor<f32>\n"
+    code := code ++ s!"    %mean = stablehlo.divide %total, %Bc : tensor<f32>\n"
+    code := code ++ s!"    %loss = stablehlo.negate %mean : tensor<f32>\n"
 
   -- ═══════════════ BACKWARD ═══════════════
   code := code ++ "\n    // ════════════════════════════════════════════════════════════════\n"
@@ -4084,7 +4106,25 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
   code := code ++ s!"    %softmax = stablehlo.divide %exp_s, %sum_e_b : {tensorTy [B, NC]}\n"
   code := code ++ s!"    %sm_moh = stablehlo.subtract %softmax, {onehotSSA} : {tensorTy [B, NC]}\n"
   code := code ++ s!"    %Bc_nc = stablehlo.broadcast_in_dim %Bc, dims = [] : (tensor<f32>) -> {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %d_logits = stablehlo.divide %sm_moh, %Bc_nc : {tensorTy [B, NC]}\n"
+  if useFocal then
+    -- Focal multiplier on standard CE backward:
+    --   d_logits = focal_mult · (softmax - onehot) / B
+    -- where focal_mult = (1-p_y)^γ - γ · p_y · (1-p_y)^(γ-1) · log(p_y)
+    -- Derivation: dL/dp_y = γ·(1-p_y)^(γ-1)·log(p_y) - (1-p_y)^γ/p_y;
+    -- chain through softmax to get the (softmax - onehot) factor.
+    code := code ++ s!"    %onef_g1 = stablehlo.constant dense<1.0> : {tensorTy [B]}\n"
+    code := code ++ s!"    %gm1 = stablehlo.constant dense<{focalGamma - 1.0}> : {tensorTy [B]}\n"
+    code := code ++ s!"    %gm1_log_omp = stablehlo.multiply %gm1, %log_omp : {tensorTy [B]}\n"
+    code := code ++ s!"    %ff_gm1 = stablehlo.exponential %gm1_log_omp : {tensorTy [B]}\n"
+    code := code ++ s!"    %g_p_y = stablehlo.multiply %gamma_b, %p_y : {tensorTy [B]}\n"
+    code := code ++ s!"    %g_p_y_lpy = stablehlo.multiply %g_p_y, %log_p_y : {tensorTy [B]}\n"
+    code := code ++ s!"    %focal_mult_term2 = stablehlo.multiply %ff_gm1, %g_p_y_lpy : {tensorTy [B]}\n"
+    code := code ++ s!"    %focal_mult = stablehlo.subtract %focal_factor, %focal_mult_term2 : {tensorTy [B]}\n"
+    code := code ++ s!"    %focal_mult_b = stablehlo.broadcast_in_dim %focal_mult, dims = [0] : ({tensorTy [B]}) -> {tensorTy [B, NC]}\n"
+    code := code ++ s!"    %fm_smmoh = stablehlo.multiply %focal_mult_b, %sm_moh : {tensorTy [B, NC]}\n"
+    code := code ++ s!"    %d_logits = stablehlo.divide %fm_smmoh, %Bc_nc : {tensorTy [B, NC]}\n"
+  else
+    code := code ++ s!"    %d_logits = stablehlo.divide %sm_moh, %Bc_nc : {tensorTy [B, NC]}\n"
 
   let mut gradSSA := "%d_logits"
   let mut gradShape : List Nat := [B, NC]
@@ -6077,13 +6117,14 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat)
 def generateTrainStep (spec : NetSpec) (batchSize : Nat) (moduleName : String := "jit_train_step")
     (labelSmoothing : Float := 0.1) (weightDecay : Float := 0.0001) (useAdam : Bool := true)
     (useSoftLabels : Bool := false)
+    (useFocal : Bool := false) (focalGamma : Float := 2.0)
     : String :=
   s!"// {spec.name} train_step — Generated by Lean 4 → MLIR (StableHLO + VJPs)\n" ++
   s!"// Batch size: {batchSize}, optimizer: {if useAdam then "Adam" else "SGD+momentum"}\n" ++
-  s!"// label_smoothing: {labelSmoothing}, weight_decay: {weightDecay}, soft_labels: {useSoftLabels}\n\n" ++
+  s!"// label_smoothing: {labelSmoothing}, weight_decay: {weightDecay}, soft_labels: {useSoftLabels}, focal: {useFocal} (γ={focalGamma})\n\n" ++
   s!"module @{moduleName} " ++ "{\n" ++
   emitTrainStepSig spec batchSize useSoftLabels ++ " {\n" ++
-  emitTrainStepBody spec batchSize moduleName labelSmoothing weightDecay useAdam useSoftLabels ++
+  emitTrainStepBody spec batchSize moduleName labelSmoothing weightDecay useAdam useSoftLabels useFocal focalGamma ++
   "  }\n" ++
   "}\n"
 

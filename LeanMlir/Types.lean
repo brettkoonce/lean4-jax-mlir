@@ -208,6 +208,13 @@ structure TrainConfig where
   warmupEpochs : Nat := 0
   augment      : Bool := false
   labelSmoothing : Float := 0.0
+  /-- Focal loss (Lin et al. 2017): replace CE loss with
+      `-(1-p_y)^γ · log(p_y)`. Down-weights well-classified examples,
+      up-weights hard ones. Restricted to the int-label path (no soft
+      labels) and labelSmoothing must be 0 — focal mixes poorly with
+      both. γ=2.0 is the paper default. -/
+  useFocal     : Bool  := false
+  focalGamma   : Float := 2.0
   /-- DeiT-style data augmentation knobs. Setting `useMixup` or
       `useCutmix` switches the train-step to the soft-label codegen
       path; the dataloader produces a `[B, NC]` smoothed soft-label

@@ -91,11 +91,17 @@ def compileVmfbs (spec : NetSpec) (cfg : TrainConfig) : IO String := do
   IO.eprintln "Generating train step MLIR..."
   -- Mixup / CutMix / KNN-Mixup produce fractional labels; switch to the soft-label codegen.
   let useSoftLabels := cfg.useMixup || cfg.useCutmix || cfg.useKnnMixup
+  if cfg.useFocal && useSoftLabels then
+    throw <| IO.userError "useFocal is restricted to int-label loss; disable mixup/cutmix/knnMixup"
+  if cfg.useFocal && cfg.labelSmoothing != 0.0 then
+    throw <| IO.userError "useFocal requires labelSmoothing = 0 (focal mixes poorly with smoothing)"
   let trainMlir := MlirCodegen.generateTrainStep spec cfg.batchSize ("jit_" ++ spec.sanitizedName ++ "_train_step")
     (labelSmoothing := cfg.labelSmoothing)
     (weightDecay := cfg.weightDecay)
     (useAdam := cfg.useAdam)
     (useSoftLabels := useSoftLabels)
+    (useFocal := cfg.useFocal)
+    (focalGamma := cfg.focalGamma)
   IO.FS.writeFile s!"{pfx}_train_step.mlir" trainMlir
   IO.eprintln s!"  {trainMlir.length} chars"
 

@@ -215,6 +215,10 @@ lean_exe «test-convnext-train-emit» where
   root := `tests.TestConvNextTrainEmit
   moreLinkArgs := ireeLink
 
+lean_exe «test-focal-emit» where
+  root := `tests.TestFocalEmit
+  moreLinkArgs := ireeLink
+
 lean_exe «test-convnext-train-step» where
   root := `tests.TestConvNextTrainStep
   moreLinkArgs := ireeLink
