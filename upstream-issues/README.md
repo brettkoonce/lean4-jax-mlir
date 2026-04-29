@@ -12,16 +12,16 @@ the workaround for each is documented in the relevant folder's README.
 
 ## Currently open
 
-| folder | upstream issue | workaround |
-|---|---|---|
-| [`2026-04-jax-jit-conv-backward-segv/`](2026-04-jax-jit-conv-backward-segv/) | [ROCm/jax#745](https://github.com/ROCm/jax/issues/745) | `JAX_DISABLE_JIT=1` (eager mode, ~15× slower) |
-| [`2026-04-jax-rocm-multigpu-mesh-hang/`](2026-04-jax-rocm-multigpu-mesh-hang/) | [ROCm/jax#746](https://github.com/ROCm/jax/issues/746) | `ROCR_VISIBLE_DEVICES=0` (single GPU) |
+_None._ All previously-open ROCm-side reports have been resolved by
+the `jax 0.10.0` upgrade or by IREE 3.12.
 
 ## Fixed upstream
 
 | folder | upstream issue | fixed at |
 |---|---|---|
 | [`2026-04-rocm-miopen-conv-segv/`](2026-04-rocm-miopen-conv-segv/) | [ROCm/MIOpen#3955](https://github.com/ROCm/MIOpen/issues/3955) | `jax 0.10.0` / `jaxlib 0.10.0` / `jax-rocm7-{pjrt,plugin} 0.9.1.post4` |
+| [`2026-04-jax-jit-conv-backward-segv/`](2026-04-jax-jit-conv-backward-segv/) | [ROCm/jax#745](https://github.com/ROCm/jax/issues/745) | `jax 0.10.0` / `jaxlib 0.10.0` / `jax-rocm7-{pjrt,plugin} 0.9.1.post4` |
+| [`2026-04-jax-rocm-multigpu-mesh-hang/`](2026-04-jax-rocm-multigpu-mesh-hang/) | [ROCm/jax#746](https://github.com/ROCm/jax/issues/746) | `jax 0.10.0` / `jaxlib 0.10.0` / `jax-rocm7-{pjrt,plugin} 0.9.1.post4` |
 | [`2026-04-iree-rocm-ln-channel-reduction-distribute/`](2026-04-iree-rocm-ln-channel-reduction-distribute/) | [iree-org/iree#24283](https://github.com/iree-org/iree/issues/24283) | `iree-base-compiler 3.12.0rc20260428 @ af030e43d8343263a6c869eae32f958f229ff7af` |
 | [`2026-04-iree-rocm-stacked-reduce-distribute/`](2026-04-iree-rocm-stacked-reduce-distribute/) | [iree-org/iree#24282](https://github.com/iree-org/iree/issues/24282) | `iree-base-compiler 3.12.0rc20260428 @ af030e43d8343263a6c869eae32f958f229ff7af` |
 

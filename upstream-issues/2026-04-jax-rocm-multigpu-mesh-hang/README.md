@@ -1,5 +1,13 @@
 # Multi-GPU Mesh sharding hangs indefinitely on gfx1100 (ROCm 7.2)
 
+**Status: Fixed.** Confirmed fixed by upgrading to `jax 0.10.0` /
+`jaxlib 0.10.0` / `jax-rocm7-{pjrt,plugin} 0.9.1.post4`. ROCm /
+MIOpen versions unchanged (7.2.0 / 3.5.1). The minimal reproducer
+(`repro.py`) now compiles and runs to completion in seconds across
+both GPUs of the same dual-7900-XTX node where it previously hung
+indefinitely (18+ minutes, never completed). The previous
+`ROCR_VISIBLE_DEVICES=0` (single-GPU) workaround is no longer needed.
+
 ## Summary
 
 `jax.jit(value_and_grad(f))` hangs indefinitely during XLA compilation when data is distributed across multiple GPUs using `jax.sharding.Mesh` + `NamedSharding`. This affects **all** models, including trivial dense-only (MLP) networks. Single-GPU JIT works fine, and multi-GPU with no sharding also works fine. The hang is specifically triggered by `PartitionSpec('batch')` data sharding across a multi-device `Mesh`.

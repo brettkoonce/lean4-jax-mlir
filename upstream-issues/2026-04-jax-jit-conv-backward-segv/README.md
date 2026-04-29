@@ -1,5 +1,12 @@
 # JIT segfault: conv + reshape + matmul backward on gfx1100 (ROCm 7.2)
 
+**Status: Fixed.** Confirmed fixed by upgrading to `jax 0.10.0` /
+`jaxlib 0.10.0` / `jax-rocm7-{pjrt,plugin} 0.9.1.post4`. ROCm /
+MIOpen versions unchanged (7.2.0 / 3.5.1). The minimal reproducer
+(`repro.py`) now runs to completion: returns gradient tensors of the
+expected shapes, no SIGSEGV. The previous `JAX_DISABLE_JIT=1`
+workaround is no longer needed on 0.10.0+.
+
 ## Summary
 
 `jax.jit(value_and_grad(f))` segfaults when `f` contains a convolution followed by a reshape (flatten) and a matmul (dense layer). The crash occurs during XLA compilation, not at runtime. Eager mode (`JAX_DISABLE_JIT=1`) works correctly. Forward-only JIT also works. The crash is specifically in the backward pass compilation.
