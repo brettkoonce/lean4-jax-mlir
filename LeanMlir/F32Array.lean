@@ -154,6 +154,16 @@ opaque cutmixSoftLabels (intLabels : @& ByteArray) (batch : USize) (nClasses : U
 opaque randomErasing (images : @& ByteArray) (batch : USize) (channels : USize)
     (height : USize) (width : USize) (prob : Float) (seed : USize) : IO ByteArray
 
+/-- RandAugment-Color (Cubuk et al. 2019, color-only subset). Per image,
+    apply `nOps` random ops drawn from {identity, brightness, contrast,
+    color, autocontrast} with magnitude `m` (0–10, paper default 9).
+    Geometric ops (rotate / shear / translate) are TODO. Linear in pixel
+    values, so works directly in normalized space without de-norm. -/
+@[extern "lean_f32_rand_augment"]
+opaque randAugment (images : @& ByteArray) (batch : USize) (channels : USize)
+    (height : USize) (width : USize) (nOps : USize) (m : Float)
+    (seed : USize) : IO ByteArray
+
 /-- EMA on squared values: out = (1−mom)·running + mom·batch². Used by
     SWAG to maintain a running E[θ²] alongside SWA's running E[θ]. -/
 @[extern "lean_f32_ema_sq"]

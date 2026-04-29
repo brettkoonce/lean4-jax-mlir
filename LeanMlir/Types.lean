@@ -234,6 +234,14 @@ structure TrainConfig where
   knnMixupAlpha  : Float := 1.0
   randomErasing  : Bool  := false
   randomErasingProb : Float := 0.25
+  /-- RandAugment-Color (Cubuk et al. 2019, color subset). Applied
+      per-image before mixup/cutmix, after crop/hflip. `randAugmentN`
+      ops drawn uniformly from {identity, brightness, contrast, color,
+      autocontrast} per image, each at magnitude `randAugmentM` (0–10,
+      paper default 9). No labels touched. -/
+  useRandAugment : Bool  := false
+  randAugmentN   : Nat   := 2
+  randAugmentM   : Float := 9.0
   /-- DeiT-style training-loop knobs that average weights for the eval
       checkpoint. Both can be on simultaneously; eval picks EMA when
       both are enabled. Storage cost: one extra `nParams`-sized buffer

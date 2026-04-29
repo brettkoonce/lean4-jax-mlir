@@ -360,7 +360,10 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
       let yb := F32.sliceLabels curLbl (bi * batchN) batchN
       let stepSeed : USize := (epoch * 100000 + bi).toUSize
       let mut yArg : ByteArray := yb
-      -- DeiT-style aug. Random Erasing first (image-only).
+      -- DeiT-style aug. RandAugment first (color-only subset), then RE.
+      if cfg.useRandAugment then
+        let raSeed : USize := stepSeed ^^^ (5 : USize)
+        xba ← F32.randAugment xba batch augC.toUSize augH.toUSize augW.toUSize cfg.randAugmentN.toUSize cfg.randAugmentM raSeed
       if cfg.randomErasing then
         xba ← F32.randomErasing xba batch augC.toUSize augH.toUSize augW.toUSize cfg.randomErasingProb stepSeed
       -- Mixup XOR CutMix XOR KNN-Mixup (paper convention: pick one per batch).

@@ -508,6 +508,9 @@ def vitTinyBareConfig : TrainConfig where
 def vitTinyEraseConfig : TrainConfig :=
   { vitTinyBareConfig with randomErasing := true }
 
+def vitTinyRandAugConfig : TrainConfig :=
+  { vitTinyBareConfig with useRandAugment := true, randAugmentN := 2, randAugmentM := 9.0 }
+
 def vitTinyMixupConfig : TrainConfig :=
   { vitTinyBareConfig with useMixup := true, mixupAlpha := 0.8 }
 
@@ -817,6 +820,7 @@ def ablations : List (String × AblationRun) := [
   -- subset of the DeiT recipe.
   ("vit-tiny-bare",        ⟨vitTinyAblationSpec, vitTinyBareConfig,        .imagenette, "data/imagenette"⟩),
   ("vit-tiny-erase",       ⟨vitTinyAblationSpec, vitTinyEraseConfig,       .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-randaug",     ⟨vitTinyAblationSpec, vitTinyRandAugConfig,     .imagenette, "data/imagenette"⟩),
   ("vit-tiny-mixup",       ⟨vitTinyAblationSpec, vitTinyMixupConfig,       .imagenette, "data/imagenette"⟩),
   ("vit-tiny-cutmix",      ⟨vitTinyAblationSpec, vitTinyCutmixConfig,      .imagenette, "data/imagenette"⟩),
   ("vit-tiny-knn-mixup",   ⟨vitTinyAblationSpec, vitTinyKnnMixupConfig,    .imagenette, "data/imagenette"⟩),

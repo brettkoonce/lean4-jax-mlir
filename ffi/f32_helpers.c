@@ -829,3 +829,100 @@ LEAN_EXPORT lean_obj_res lean_f32_random_erasing(
     }
     return lean_io_result_mk_ok(out);
 }
+
+// ============================================================
+// RandAugment-Color (Cubuk et al. 2019, color-only subset)
+// ============================================================
+// The full RandAugment policy has ~14 ops including geometric ones
+// (rotate / shear / translate) that need bilinear interpolation. This
+// kernel implements 4 *linear* color ops that work directly in
+// normalized space — no de-norm/re-norm round-trip:
+//
+//   identity      — no-op
+//   brightness    — img *= factor                  (factor ~ 1 ± strength*0.5)
+//   contrast      — lerp pixels around per-image mean  (same factor range)
+//   color         — lerp toward per-pixel grayscale (saturation knob)
+//   autocontrast  — stretch min→0 / max→1 (no magnitude, image-derived)
+//
+// Per image: pick `n_ops` ops uniformly with replacement from the 5,
+// apply each in sequence with magnitude `m` (0–10 typical, paper
+// default M=9). Geometric ops (rotate/shear/translate) are TODO.
+// ----------------------------------------------------------------
+
+static inline void apply_brightness(float* img, size_t pixels, double factor) {
+    float f = (float)factor;
+    for (size_t k = 0; k < pixels; k++) img[k] *= f;
+}
+
+static inline void apply_contrast(float* img, size_t pixels, double factor) {
+    double mean = 0.0;
+    for (size_t k = 0; k < pixels; k++) mean += img[k];
+    mean /= (double)pixels;
+    float m = (float)mean, f = (float)factor;
+    for (size_t k = 0; k < pixels; k++) img[k] = m + f * (img[k] - m);
+}
+
+// NCHW with channels=3 only. mag=1 → identity, mag=0 → grayscale.
+static inline void apply_color(float* img, size_t channels, size_t height,
+                               size_t width, double factor) {
+    if (channels != 3) return;
+    size_t plane = height * width;
+    float f = (float)factor, om = 1.0f - f;
+    float* r = img;
+    float* g = img + plane;
+    float* b = img + 2 * plane;
+    for (size_t k = 0; k < plane; k++) {
+        float gray = 0.299f * r[k] + 0.587f * g[k] + 0.114f * b[k];
+        r[k] = f * r[k] + om * gray;
+        g[k] = f * g[k] + om * gray;
+        b[k] = f * b[k] + om * gray;
+    }
+}
+
+static inline void apply_autocontrast(float* img, size_t pixels) {
+    float mn = img[0], mx = img[0];
+    for (size_t k = 1; k < pixels; k++) {
+        if (img[k] < mn) mn = img[k];
+        if (img[k] > mx) mx = img[k];
+    }
+    float range = mx - mn;
+    if (range < 1e-6f) return;
+    float inv = 1.0f / range;
+    for (size_t k = 0; k < pixels; k++) img[k] = (img[k] - mn) * inv;
+}
+
+// Magnitude → factor: factor = 1 + sign * strength * 0.5 ∈ [0.5, 1.5] at M=10
+static inline double rand_factor(double m, uint64_t* s) {
+    double strength = m / 10.0;
+    if (strength > 1.0) strength = 1.0;
+    double sign = (f32_unif01(s) < 0.5) ? -1.0 : 1.0;
+    return 1.0 + sign * strength * 0.5;
+}
+
+LEAN_EXPORT lean_obj_res lean_f32_rand_augment(
+    b_lean_obj_arg images, size_t batch, size_t channels,
+    size_t height, size_t width, size_t n_ops, double m,
+    size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t pixels = channels * height * width;
+    size_t nbytes = batch * pixels * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    float* o = (float*)lean_sarray_cptr(out);
+    memcpy(o, lean_sarray_cptr(images), nbytes);
+    uint64_t s = seed ^ 0xd4e5f60718293a4bULL; if (s == 0) s = 1;
+    const int N_KINDS = 5;  // identity, brightness, contrast, color, autocontrast
+    for (size_t i = 0; i < batch; i++) {
+        float* img = o + i * pixels;
+        for (size_t k = 0; k < n_ops; k++) {
+            int op = (int)(f32_xorshift64(&s) % N_KINDS);
+            switch (op) {
+                case 0: break;  // identity
+                case 1: apply_brightness(img, pixels, rand_factor(m, &s)); break;
+                case 2: apply_contrast(img, pixels, rand_factor(m, &s));   break;
+                case 3: apply_color(img, channels, height, width, rand_factor(m, &s)); break;
+                case 4: apply_autocontrast(img, pixels); break;
+            }
+        }
+    }
+    return lean_io_result_mk_ok(out);
+}
