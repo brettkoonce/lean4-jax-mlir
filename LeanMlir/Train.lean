@@ -302,6 +302,12 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
   let mut curImg := trainImg
   let mut curLbl := trainLbl
   let mut globalStep : Nat := 0
+  -- EMA / SWA running averages of θ, used for the final eval checkpoint
+  -- when their respective TrainConfig knobs are enabled. Both initialize
+  -- to a copy of `params` (so the EMA hasn't moved yet at step 0).
+  let mut emaParams : ByteArray := if cfg.useEMA then params else .empty
+  let mut swaParams : ByteArray := if cfg.useSWA then params else .empty
+  let mut swaCount  : Nat := 0
 
   -- LEAN_MLIR_NO_SHUFFLE=1 disables per-epoch shuffling — used for
   -- phase-2/phase-3 cross-verification where both sides need to see
@@ -370,6 +376,10 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
       p := F32.slice out 0 nP
       m := F32.slice out nP nP
       v := F32.slice out (2 * nP) nP
+      -- EMA: per-step `ema = decay·ema + (1-decay)·θ`. F32.ema's signature
+      -- is `mom·new + (1-mom)·running`, so pass mom = 1-decay.
+      if cfg.useEMA then
+        emaParams ← F32.ema emaParams p (1.0 - cfg.emaDecay)
       if let some h := traceHandle then
         let line :=
           "{\"kind\":\"step\"" ++
@@ -388,6 +398,14 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
     let avgLoss := epochLoss / bpE.toFloat
     IO.eprintln s!"Epoch {epoch+1}/{epochs}: loss={avgLoss} lr={lr} ({t1-t0}ms)"
 
+    -- SWA: equal-weight average of params from epochs ≥ swaStartEpoch.
+    -- Update once per epoch boundary using running-average semantics:
+    --   swa_θ = (n·swa_θ + θ) / (n+1) = ema(swa_θ, θ, 1/(n+1)).
+    if cfg.useSWA && epoch >= cfg.swaStartEpoch then
+      let mom : Float := 1.0 / (swaCount.toFloat + 1.0)
+      swaParams ← F32.ema swaParams p mom
+      swaCount := swaCount + 1
+
     if (epoch + 1) % 10 == 0 || epoch + 1 == epochs then
       let evalVmfb := s!"{pfx}_fwd_eval.vmfb"
       if ← System.FilePath.pathExists evalVmfb then
@@ -396,8 +414,21 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
         let evalBatch := batchN
         let evalSteps := nVal / evalBatch
         let evalXSh := spec.xShape evalBatch
-        let evalParams := p.append runningBnStats
         let evalShapesBA := spec.evalShapesBA
+        -- EMA gets priority over SWA when both are enabled (DeiT default).
+        -- For models with BN, the running-stat block at the end of
+        -- evalParams is a stale-vs-averaged-weights mismatch; for now we
+        -- accept that, and recommend BN-free architectures for EMA/SWA
+        -- experiments. A future BN-recompute pass would fix this.
+        let evalLabel : String :=
+          if cfg.useEMA then "EMA"
+          else if cfg.useSWA && epoch + 1 == epochs then "SWA"
+          else "running BN"
+        let evalWeights : ByteArray :=
+          if cfg.useEMA then emaParams
+          else if cfg.useSWA && epoch + 1 == epochs then swaParams
+          else p
+        let evalParams := evalWeights.append runningBnStats
         let mut correct : Nat := 0
         let mut total : Nat := 0
         for bi in [:evalSteps] do
@@ -411,10 +442,14 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
             if pred.toNat == label then correct := correct + 1
             total := total + 1
         let acc := correct.toFloat / total.toFloat * 100.0
-        IO.eprintln s!"  val accuracy (running BN): {correct}/{total} = {acc}%"
+        IO.eprintln s!"  val accuracy ({evalLabel}): {correct}/{total} = {acc}%"
 
   IO.FS.writeBinFile s!"{pfx}_params.bin" p
   IO.FS.writeBinFile s!"{pfx}_bn_stats.bin" runningBnStats
+  if cfg.useEMA then
+    IO.FS.writeBinFile s!"{pfx}_ema_params.bin" emaParams
+  if cfg.useSWA then
+    IO.FS.writeBinFile s!"{pfx}_swa_params.bin" swaParams
   IO.eprintln "Saved params + BN stats."
 
 /-- End-to-end: compile all three vmfbs, load the train-step session,

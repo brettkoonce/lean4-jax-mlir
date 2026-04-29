@@ -221,6 +221,17 @@ structure TrainConfig where
   cutmixAlpha    : Float := 1.0
   randomErasing  : Bool  := false
   randomErasingProb : Float := 0.25
+  /-- DeiT-style training-loop knobs that average weights for the eval
+      checkpoint. Both can be on simultaneously; eval picks EMA when
+      both are enabled. Storage cost: one extra `nParams`-sized buffer
+      per knob; runtime cost is one `F32.ema` call per step (EMA) or
+      per epoch (SWA), well below GPU step time. -/
+  useEMA         : Bool  := false
+  emaDecay       : Float := 0.9999
+  useSWA         : Bool  := false
+  /-- First epoch (zero-indexed) that contributes to the SWA average.
+      Typical recipe: 0.75 × epochs, e.g. epoch 60 of 80. -/
+  swaStartEpoch  : Nat   := 0
 deriving Repr
 
 inductive DatasetKind where

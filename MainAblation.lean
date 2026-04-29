@@ -541,6 +541,22 @@ def vitTinyFullConfig : TrainConfig :=
       useMixup := true, mixupAlpha := 0.8,
       randomErasing := true }
 
+-- DeiT-recipe knob ablations: EMA, SWA, and stacks-on-top-of-CutMix.
+-- Each tests a single new training-loop knob in isolation, then layered
+-- onto the best aug variant (CutMix) to see if the gains compound.
+
+def vitTinyEmaConfig : TrainConfig :=
+  { vitTinyBareConfig with useEMA := true }
+
+def vitTinySwaConfig : TrainConfig :=
+  { vitTinyBareConfig with useSWA := true, swaStartEpoch := 60 }
+
+def vitTinyCutmixEmaConfig : TrainConfig :=
+  { vitTinyCutmixConfig with useEMA := true }
+
+def vitTinyCutmixSwaConfig : TrainConfig :=
+  { vitTinyCutmixConfig with useSWA := true, swaStartEpoch := 60 }
+
 -- ═══════════════════════════════════════════════════════════════════
 -- Chapter 9: ConvNeXt-Tiny on Imagenette — LayerNorm + GELU on a
 -- pure-CNN backbone. The "can a CNN still compete in 2022" answer
@@ -807,11 +823,15 @@ def ablations : List (String × AblationRun) := [
   -- whether ViT's "needs data scale" reputation reduces to "needs
   -- the DeiT recipe" — at our Imagenette scale, with only the cheap
   -- subset of the DeiT recipe.
-  ("vit-tiny-bare",   ⟨vitTinyAblationSpec, vitTinyBareConfig,   .imagenette, "data/imagenette"⟩),
-  ("vit-tiny-erase",  ⟨vitTinyAblationSpec, vitTinyEraseConfig,  .imagenette, "data/imagenette"⟩),
-  ("vit-tiny-mixup",  ⟨vitTinyAblationSpec, vitTinyMixupConfig,  .imagenette, "data/imagenette"⟩),
-  ("vit-tiny-cutmix", ⟨vitTinyAblationSpec, vitTinyCutmixConfig, .imagenette, "data/imagenette"⟩),
-  ("vit-tiny-full",   ⟨vitTinyAblationSpec, vitTinyFullConfig,   .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-bare",        ⟨vitTinyAblationSpec, vitTinyBareConfig,        .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-erase",       ⟨vitTinyAblationSpec, vitTinyEraseConfig,       .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-mixup",       ⟨vitTinyAblationSpec, vitTinyMixupConfig,       .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-cutmix",      ⟨vitTinyAblationSpec, vitTinyCutmixConfig,      .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-full",        ⟨vitTinyAblationSpec, vitTinyFullConfig,        .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-ema",         ⟨vitTinyAblationSpec, vitTinyEmaConfig,         .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-swa",         ⟨vitTinyAblationSpec, vitTinySwaConfig,         .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-cutmix-ema",  ⟨vitTinyAblationSpec, vitTinyCutmixEmaConfig,  .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-cutmix-swa",  ⟨vitTinyAblationSpec, vitTinyCutmixSwaConfig,  .imagenette, "data/imagenette"⟩),
 
   -- Chapter 9: ConvNeXt-Tiny activation ablation (GELU vs ReLU, both
   -- with LN). The full paper recipe on Imagenette (224×224); a CIFAR
