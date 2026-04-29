@@ -106,4 +106,36 @@ opaque centerCrop (images : @& ByteArray) (batch : USize) (channels : USize)
 opaque randomHFlip (images : @& ByteArray) (batch : USize) (channels : USize)
     (height : USize) (width : USize) (seed : USize) : IO ByteArray
 
+/-- Mixup (Zhang et al. 2017) — λ ~ Beta(α, α), x_mixed[i] =
+    λ·x[i] + (1-λ)·x[π(i)]. Returns the mixed image batch.
+    Pair with `mixupSoftLabels` using the SAME seed + alpha. -/
+@[extern "lean_f32_mixup_images"]
+opaque mixupImages (images : @& ByteArray) (batch : USize) (channels : USize)
+    (height : USize) (width : USize) (alpha : Float) (seed : USize) : IO ByteArray
+
+/-- Soft labels for the mixup. Pair with `mixupImages` (same seed + alpha).
+    Output shape: [batch, nClasses] f32, with label smoothing applied. -/
+@[extern "lean_f32_mixup_soft_labels"]
+opaque mixupSoftLabels (intLabels : @& ByteArray) (batch : USize) (nClasses : USize)
+    (alpha : Float) (smooth : Float) (seed : USize) : IO ByteArray
+
+/-- CutMix (Yun et al. 2019) — paste a random rectangle from x[π(i)]
+    onto x[i]. Pair with `cutmixSoftLabels` (same seed + alpha). -/
+@[extern "lean_f32_cutmix_images"]
+opaque cutmixImages (images : @& ByteArray) (batch : USize) (channels : USize)
+    (height : USize) (width : USize) (alpha : Float) (seed : USize) : IO ByteArray
+
+/-- Soft labels for CutMix. λ_actual is recomputed from rectangle area. -/
+@[extern "lean_f32_cutmix_soft_labels"]
+opaque cutmixSoftLabels (intLabels : @& ByteArray) (batch : USize) (nClasses : USize)
+    (height : USize) (width : USize) (alpha : Float) (smooth : Float)
+    (seed : USize) : IO ByteArray
+
+/-- Random Erasing (Zhong et al. 2017) — with probability `prob`, fill a
+    random rectangle (relative area 2–33%, aspect 0.3–3.3) with N(0,1)
+    noise. Per-image independent. Labels unchanged. -/
+@[extern "lean_f32_random_erasing"]
+opaque randomErasing (images : @& ByteArray) (batch : USize) (channels : USize)
+    (height : USize) (width : USize) (prob : Float) (seed : USize) : IO ByteArray
+
 end F32

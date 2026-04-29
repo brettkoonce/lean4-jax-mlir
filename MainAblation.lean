@@ -493,6 +493,55 @@ def enetB0Config : TrainConfig where
   labelSmoothing := 0.1
 
 -- ═══════════════════════════════════════════════════════════════════
+-- Chapter 10: ViT-Tiny on Imagenette — DeiT-style augmentation ablation.
+-- Original ViT was data-hungry (needed JFT-300M); DeiT (Touvron 2020)
+-- showed the recipe is the architecture: Mixup + CutMix + RandAugment +
+-- Random Erasing + EMA + Stochastic Depth lifted ViT-S from ~78% to
+-- 79.8% on ImageNet-1K from scratch. We ship the dataloader-only
+-- subset (Mixup, CutMix, Random Erasing) — the truly cheap subset of
+-- the recipe — to test whether the recipe gap explains why our
+-- bare-recipe ViT-Tiny lands at ~72% Imagenette while CNNs hit ~88%.
+-- ═══════════════════════════════════════════════════════════════════
+
+def vitTinyAblationSpec : NetSpec where
+  name := "ViT-Tiny"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .patchEmbed 3 192 16 196,
+    .transformerEncoder 192 3 768 12,
+    .dense 192 10 .identity
+  ]
+
+def vitTinyBareConfig : TrainConfig where
+  learningRate := 0.0003
+  batchSize    := 32
+  epochs       := 80
+  useAdam      := true
+  weightDecay  := 0.0001
+  cosineDecay  := true
+  warmupEpochs := 5
+  augment      := true
+  labelSmoothing := 0.1
+
+def vitTinyEraseConfig : TrainConfig :=
+  { vitTinyBareConfig with randomErasing := true }
+
+def vitTinyMixupConfig : TrainConfig :=
+  { vitTinyBareConfig with useMixup := true, mixupAlpha := 0.8 }
+
+def vitTinyCutmixConfig : TrainConfig :=
+  { vitTinyBareConfig with useCutmix := true, cutmixAlpha := 1.0 }
+
+-- "Full" = mixup XOR cutmix (paper convention picks one per batch);
+-- here we use mixup + RE since CutMix needs its own per-batch decision
+-- and our codegen path picks Mixup when both are flagged.
+def vitTinyFullConfig : TrainConfig :=
+  { vitTinyBareConfig with
+      useMixup := true, mixupAlpha := 0.8,
+      randomErasing := true }
+
+-- ═══════════════════════════════════════════════════════════════════
 -- Chapter 9: ConvNeXt-Tiny on Imagenette — LayerNorm + GELU on a
 -- pure-CNN backbone. The "can a CNN still compete in 2022" answer
 -- (Liu et al. 2022). 1D activation ablation: GELU vs ReLU, both
@@ -752,6 +801,17 @@ def ablations : List (String × AblationRun) := [
   -- effects; the only knob varied is the MBConv activation function.
   ("enet-b0-swish", ⟨enetB0SwishSpec, enetB0Config, .imagenette, "data/imagenette"⟩),
   ("enet-b0-relu",  ⟨enetB0ReluSpec,  enetB0Config, .imagenette, "data/imagenette"⟩),
+
+  -- Chapter 10: ViT-Tiny augmentation ablation. Same architecture +
+  -- recipe; only the dataloader's augmentation pack varies. Tests
+  -- whether ViT's "needs data scale" reputation reduces to "needs
+  -- the DeiT recipe" — at our Imagenette scale, with only the cheap
+  -- subset of the DeiT recipe.
+  ("vit-tiny-bare",   ⟨vitTinyAblationSpec, vitTinyBareConfig,   .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-erase",  ⟨vitTinyAblationSpec, vitTinyEraseConfig,  .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-mixup",  ⟨vitTinyAblationSpec, vitTinyMixupConfig,  .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-cutmix", ⟨vitTinyAblationSpec, vitTinyCutmixConfig, .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-full",   ⟨vitTinyAblationSpec, vitTinyFullConfig,   .imagenette, "data/imagenette"⟩),
 
   -- Chapter 9: ConvNeXt-Tiny activation ablation (GELU vs ReLU, both
   -- with LN). The full paper recipe on Imagenette (224×224); a CIFAR

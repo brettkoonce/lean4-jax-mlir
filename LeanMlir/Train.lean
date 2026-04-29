@@ -89,10 +89,13 @@ def compileVmfbs (spec : NetSpec) (cfg : TrainConfig) : IO String := do
   let pfx := spec.buildPrefix
 
   IO.eprintln "Generating train step MLIR..."
+  -- Mixup / CutMix produce fractional labels; switch to the soft-label codegen.
+  let useSoftLabels := cfg.useMixup || cfg.useCutmix
   let trainMlir := MlirCodegen.generateTrainStep spec cfg.batchSize ("jit_" ++ spec.sanitizedName ++ "_train_step")
     (labelSmoothing := cfg.labelSmoothing)
     (weightDecay := cfg.weightDecay)
     (useAdam := cfg.useAdam)
+    (useSoftLabels := useSoftLabels)
   IO.FS.writeFile s!"{pfx}_train_step.mlir" trainMlir
   IO.eprintln s!"  {trainMlir.length} chars"
 
@@ -320,16 +323,47 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
 
     let mut epochLoss : Float := 0.0
     let t0 ← IO.monoMsNow
+    let useSoftLabels := cfg.useMixup || cfg.useCutmix
+    let nClassesNat := spec.numClasses
+    -- Spatial dims used by mixup/cutmix/RE C kernels. For 4D NCHW
+    -- post-augment shapes: imagenette is [b, 3, 224, 224]; cifar
+    -- is [b, 3, 32, 32]; mnist is [b, 1, 28, 28]. We derive H = W
+    -- from `dio.valPixels / channels` then sqrt — but easier: trust
+    -- spec.imageH / imageW for the post-augmentBatch shape (since
+    -- for imagenette augmentBatch crops 256→224).
+    let augH := spec.imageH
+    let augW := spec.imageW
+    let augC := dio.channels
     for bi in [:bpE] do
       globalStep := globalStep + 1
       let xbaRaw := F32.sliceImages curImg (bi * batchN) batchN trainPixels
-      let xba ← if cfg.augment then dio.augmentBatch xbaRaw batch (epoch * 10000 + bi)
-                                else dio.preprocessBatch xbaRaw batch
+      let xbaInit ← if cfg.augment then dio.augmentBatch xbaRaw batch (epoch * 10000 + bi)
+                                   else dio.preprocessBatch xbaRaw batch
+      let mut xba : ByteArray := xbaInit
       let yb := F32.sliceLabels curLbl (bi * batchN) batchN
+      let stepSeed : USize := (epoch * 100000 + bi).toUSize
+      let mut yArg : ByteArray := yb
+      -- DeiT-style aug. Random Erasing first (image-only).
+      if cfg.randomErasing then
+        xba ← F32.randomErasing xba batch augC.toUSize augH.toUSize augW.toUSize cfg.randomErasingProb stepSeed
+      -- Mixup XOR CutMix (paper convention: pick one per batch). Both
+      -- emit soft labels, switching the train-step path below.
+      if cfg.useMixup then
+        let mixSeed : USize := stepSeed ^^^ (1 : USize)
+        xba ← F32.mixupImages xba batch augC.toUSize augH.toUSize augW.toUSize cfg.mixupAlpha mixSeed
+        yArg ← F32.mixupSoftLabels yb batch nClassesNat.toUSize cfg.mixupAlpha cfg.labelSmoothing mixSeed
+      else if cfg.useCutmix then
+        let mixSeed : USize := stepSeed ^^^ (2 : USize)
+        xba ← F32.cutmixImages xba batch augC.toUSize augH.toUSize augW.toUSize cfg.cutmixAlpha mixSeed
+        yArg ← F32.cutmixSoftLabels yb batch nClassesNat.toUSize augH.toUSize augW.toUSize cfg.cutmixAlpha cfg.labelSmoothing mixSeed
       let packed := (p.append m).append v
       let ts0 ← IO.monoMsNow
-      let out ← IreeSession.trainStepAdamF32 sess spec.trainFnName
-                  packed allShapes xba xSh yb lr globalStep.toFloat bnShapes batch
+      let out ← if useSoftLabels then
+                  IreeSession.trainStepAdamF32Soft sess spec.trainFnName
+                    packed allShapes xba xSh yArg lr globalStep.toFloat bnShapes batch nClassesNat.toUSize
+                else
+                  IreeSession.trainStepAdamF32 sess spec.trainFnName
+                    packed allShapes xba xSh yArg lr globalStep.toFloat bnShapes batch
       let ts1 ← IO.monoMsNow
       let loss := F32.extractLoss out nT
       epochLoss := epochLoss + loss

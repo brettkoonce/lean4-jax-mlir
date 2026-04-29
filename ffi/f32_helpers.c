@@ -363,3 +363,296 @@ LEAN_EXPORT lean_obj_res lean_f32_random_hflip(
     }
     return lean_io_result_mk_ok(out);
 }
+
+// ============================================================
+// Mixup / CutMix / Random Erasing — DeiT-style augmentation pack
+// ============================================================
+//
+// Mixup (Zhang et al. 2017):
+//   λ ~ Beta(α, α); pick a permutation π over the batch.
+//   x_mixed[i]    = λ·x[i]       + (1-λ)·x[π(i)]
+//   y_mixed[i, c] = λ·smooth(y[i], c) + (1-λ)·smooth(y[π(i)], c)
+//
+// CutMix (Yun et al. 2019):
+//   λ ~ Beta(α, α); pick a random rectangle of size √(1-λ);
+//   paste rectangle from x[π(i)] onto x[i].
+//   λ_actual = 1 - (rect_area / image_area)  (bounded by image edges)
+//   y_mixed[i, c] = λ_actual·smooth(y[i], c) + (1-λ_actual)·smooth(y[π(i)], c)
+//
+// Random Erasing (Zhong et al. 2017): with probability p,
+//   pick a rectangle of relative area in [s_min, s_max] and
+//   aspect ratio in [r_min, r_max], fill with N(0, 1) noise. Per image,
+//   independent. Labels unchanged.
+//
+// Mixup and CutMix expose two FFI calls each, sharing a seed: `_images`
+// computes the mixed-image tensor; `_soft_labels` recomputes λ + π from
+// the same seed and emits a `[batch × n_classes]` smoothed soft-label
+// tensor. Calling with the same seed in both is critical — the label
+// must match the image mix.
+
+// xorshift64 step. Returns a uint64 in (0, 2^64).
+static inline uint64_t f32_xorshift64(uint64_t* s) {
+    uint64_t x = *s;
+    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+    *s = x;
+    return x;
+}
+
+// Uniform(0, 1) from xorshift state.
+static inline double f32_unif01(uint64_t* s) {
+    uint64_t x = f32_xorshift64(s);
+    return (double)(x >> 11) / (double)(1ULL << 53);
+}
+
+// Standard normal via Box-Muller (returns one of the two values).
+static inline double f32_randn(uint64_t* s) {
+    double u1 = f32_unif01(s);
+    double u2 = f32_unif01(s);
+    if (u1 < 1e-12) u1 = 1e-12;
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * 3.14159265358979323846 * u2);
+}
+
+// Marsaglia & Tsang gamma sampler for shape α > 0, scale 1.
+// For α < 1, use the boost trick: G(α) = G(α+1) · U^(1/α).
+static double f32_gamma_sample(double alpha, uint64_t* s) {
+    if (alpha < 1.0) {
+        double g1 = f32_gamma_sample(alpha + 1.0, s);
+        double u = f32_unif01(s);
+        if (u < 1e-300) u = 1e-300;
+        return g1 * pow(u, 1.0 / alpha);
+    }
+    double d = alpha - 1.0 / 3.0;
+    double c = 1.0 / sqrt(9.0 * d);
+    while (1) {
+        double x = f32_randn(s);
+        double v = 1.0 + c * x;
+        if (v <= 0) continue;
+        v = v * v * v;
+        double u = f32_unif01(s);
+        if (log(u) < 0.5 * x * x + d - d * v + d * log(v)) {
+            return d * v;
+        }
+    }
+}
+
+// Beta(α, α) via two Gammas.
+static double f32_beta_symmetric(double alpha, uint64_t* s) {
+    double g1 = f32_gamma_sample(alpha, s);
+    double g2 = f32_gamma_sample(alpha, s);
+    return g1 / (g1 + g2);
+}
+
+// Fisher-Yates permutation [0, batch). Caller provides storage.
+static void f32_permutation(size_t* perm, size_t batch, uint64_t* s) {
+    for (size_t i = 0; i < batch; i++) perm[i] = i;
+    for (size_t i = batch - 1; i > 0; i--) {
+        uint64_t r = f32_xorshift64(s);
+        size_t j = (size_t)(r % (i + 1));
+        size_t t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+    }
+}
+
+// Smoothed onehot value for label `y` at class `c`.
+//   smooth = label_smoothing in [0, 1).
+//   If c == y: 1 - smooth + smooth/N
+//   Else:      smooth/N
+static inline float f32_smooth_onehot(int y, size_t c, double smooth, size_t n_classes) {
+    double off = smooth / (double)n_classes;
+    if ((size_t)y == c) return (float)(1.0 - smooth + off);
+    return (float)off;
+}
+
+// ----------------------------------------------------------------
+// Mixup: images. Returns ByteArray of shape [batch, C, H, W] f32.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_mixup_images(
+    b_lean_obj_arg images, size_t batch, size_t channels,
+    size_t height, size_t width, double alpha, size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t pixels = channels * height * width;
+    size_t nbytes = batch * pixels * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* in = (const float*)lean_sarray_cptr(images);
+    float* o = (float*)lean_sarray_cptr(out);
+    uint64_t s = seed ^ 0xa1b2c3d4e5f60718ULL; if (s == 0) s = 1;
+    double lambda = f32_beta_symmetric(alpha, &s);
+    if (lambda < 0.5) lambda = 1.0 - lambda;  // bias toward keeping main image dominant
+    size_t* perm = (size_t*)malloc(batch * sizeof(size_t));
+    f32_permutation(perm, batch, &s);
+    float l = (float)lambda;
+    float l1 = 1.0f - l;
+    for (size_t i = 0; i < batch; i++) {
+        const float* a = in + i * pixels;
+        const float* b = in + perm[i] * pixels;
+        float* d = o + i * pixels;
+        for (size_t k = 0; k < pixels; k++) d[k] = l * a[k] + l1 * b[k];
+    }
+    free(perm);
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
+// Mixup: soft labels. Returns [batch, n_classes] f32.
+// MUST use same `seed` and `alpha` as the matching mixup_images call.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_mixup_soft_labels(
+    b_lean_obj_arg int_labels, size_t batch, size_t n_classes,
+    double alpha, double smooth, size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t out_n = batch * n_classes;
+    size_t nbytes = out_n * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    float* o = (float*)lean_sarray_cptr(out);
+    const uint8_t* lbl = (const uint8_t*)lean_sarray_cptr(int_labels);
+    uint64_t s = seed ^ 0xa1b2c3d4e5f60718ULL; if (s == 0) s = 1;
+    double lambda = f32_beta_symmetric(alpha, &s);
+    if (lambda < 0.5) lambda = 1.0 - lambda;
+    size_t* perm = (size_t*)malloc(batch * sizeof(size_t));
+    f32_permutation(perm, batch, &s);
+    float l = (float)lambda;
+    float l1 = 1.0f - l;
+    for (size_t i = 0; i < batch; i++) {
+        int32_t y_a, y_b;
+        memcpy(&y_a, lbl + i * 4, 4);
+        memcpy(&y_b, lbl + perm[i] * 4, 4);
+        for (size_t c = 0; c < n_classes; c++) {
+            float a = f32_smooth_onehot(y_a, c, smooth, n_classes);
+            float b = f32_smooth_onehot(y_b, c, smooth, n_classes);
+            o[i * n_classes + c] = l * a + l1 * b;
+        }
+    }
+    free(perm);
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
+// CutMix: images. Returns mixed-image ByteArray.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_cutmix_images(
+    b_lean_obj_arg images, size_t batch, size_t channels,
+    size_t height, size_t width, double alpha, size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t pixels = channels * height * width;
+    size_t nbytes = batch * pixels * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* in = (const float*)lean_sarray_cptr(images);
+    float* o = (float*)lean_sarray_cptr(out);
+    memcpy(o, in, nbytes);
+    uint64_t s = seed ^ 0xb2c3d4e5f6071829ULL; if (s == 0) s = 1;
+    double lambda = f32_beta_symmetric(alpha, &s);
+    size_t* perm = (size_t*)malloc(batch * sizeof(size_t));
+    f32_permutation(perm, batch, &s);
+    double cut_ratio = sqrt(1.0 - lambda);
+    size_t cut_h = (size_t)((double)height * cut_ratio);
+    size_t cut_w = (size_t)((double)width * cut_ratio);
+    if (cut_h < 1) cut_h = 1; if (cut_w < 1) cut_w = 1;
+    size_t cy = (size_t)(f32_unif01(&s) * (double)height);
+    size_t cx = (size_t)(f32_unif01(&s) * (double)width);
+    size_t y1 = cy > cut_h / 2 ? cy - cut_h / 2 : 0;
+    size_t y2 = cy + cut_h / 2; if (y2 > height) y2 = height;
+    size_t x1 = cx > cut_w / 2 ? cx - cut_w / 2 : 0;
+    size_t x2 = cx + cut_w / 2; if (x2 > width) x2 = width;
+    for (size_t i = 0; i < batch; i++) {
+        const float* b_img = in + perm[i] * pixels;
+        float* d_img = o + i * pixels;
+        for (size_t c = 0; c < channels; c++) {
+            for (size_t y = y1; y < y2; y++) {
+                size_t off = c * height * width + y * width;
+                for (size_t x = x1; x < x2; x++) {
+                    d_img[off + x] = b_img[off + x];
+                }
+            }
+        }
+    }
+    free(perm);
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
+// CutMix: soft labels. Recomputes λ_actual from rectangle area.
+// MUST use same `seed/alpha` as cutmix_images.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_cutmix_soft_labels(
+    b_lean_obj_arg int_labels, size_t batch, size_t n_classes,
+    size_t height, size_t width, double alpha, double smooth,
+    size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t out_n = batch * n_classes;
+    size_t nbytes = out_n * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    float* o = (float*)lean_sarray_cptr(out);
+    const uint8_t* lbl = (const uint8_t*)lean_sarray_cptr(int_labels);
+    uint64_t s = seed ^ 0xb2c3d4e5f6071829ULL; if (s == 0) s = 1;
+    double lambda = f32_beta_symmetric(alpha, &s);
+    size_t* perm = (size_t*)malloc(batch * sizeof(size_t));
+    f32_permutation(perm, batch, &s);
+    double cut_ratio = sqrt(1.0 - lambda);
+    size_t cut_h = (size_t)((double)height * cut_ratio);
+    size_t cut_w = (size_t)((double)width * cut_ratio);
+    if (cut_h < 1) cut_h = 1; if (cut_w < 1) cut_w = 1;
+    size_t cy = (size_t)(f32_unif01(&s) * (double)height);
+    size_t cx = (size_t)(f32_unif01(&s) * (double)width);
+    size_t y1 = cy > cut_h / 2 ? cy - cut_h / 2 : 0;
+    size_t y2 = cy + cut_h / 2; if (y2 > height) y2 = height;
+    size_t x1 = cx > cut_w / 2 ? cx - cut_w / 2 : 0;
+    size_t x2 = cx + cut_w / 2; if (x2 > width) x2 = width;
+    double rect_area = (double)((y2 - y1) * (x2 - x1));
+    double total_area = (double)(height * width);
+    double l_actual = 1.0 - rect_area / total_area;
+    float l = (float)l_actual;
+    float l1 = 1.0f - l;
+    for (size_t i = 0; i < batch; i++) {
+        int32_t y_a, y_b;
+        memcpy(&y_a, lbl + i * 4, 4);
+        memcpy(&y_b, lbl + perm[i] * 4, 4);
+        for (size_t c = 0; c < n_classes; c++) {
+            float a = f32_smooth_onehot(y_a, c, smooth, n_classes);
+            float b = f32_smooth_onehot(y_b, c, smooth, n_classes);
+            o[i * n_classes + c] = l * a + l1 * b;
+        }
+    }
+    free(perm);
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
+// Random Erasing. Per-image, with probability `prob`, fills a random
+// rectangle (area 2-33% of image, aspect ratio 0.3-3.3) with N(0,1)
+// noise. Labels unchanged — caller can keep using int32 labels.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_random_erasing(
+    b_lean_obj_arg images, size_t batch, size_t channels,
+    size_t height, size_t width, double prob, size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t pixels = channels * height * width;
+    size_t nbytes = batch * pixels * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    float* o = (float*)lean_sarray_cptr(out);
+    memcpy(o, lean_sarray_cptr(images), nbytes);
+    uint64_t s = seed ^ 0xc3d4e5f60718293aULL; if (s == 0) s = 1;
+    const double s_min = 0.02, s_max = 0.33;
+    const double r_min = 0.3, r_max = 3.3;
+    for (size_t i = 0; i < batch; i++) {
+        if (f32_unif01(&s) >= prob) continue;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            double area = (double)(height * width);
+            double target_area = area * (s_min + (s_max - s_min) * f32_unif01(&s));
+            double aspect = exp(log(r_min) + (log(r_max) - log(r_min)) * f32_unif01(&s));
+            size_t h_e = (size_t)round(sqrt(target_area * aspect));
+            size_t w_e = (size_t)round(sqrt(target_area / aspect));
+            if (h_e >= height || w_e >= width || h_e < 1 || w_e < 1) continue;
+            size_t y0 = (size_t)(f32_unif01(&s) * (double)(height - h_e));
+            size_t x0 = (size_t)(f32_unif01(&s) * (double)(width - w_e));
+            for (size_t c = 0; c < channels; c++) {
+                for (size_t y = y0; y < y0 + h_e; y++) {
+                    size_t off = i * pixels + c * height * width + y * width;
+                    for (size_t x = x0; x < x0 + w_e; x++) {
+                        o[off + x] = (float)f32_randn(&s);
+                    }
+                }
+            }
+            break;
+        }
+    }
+    return lean_io_result_mk_ok(out);
+}

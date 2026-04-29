@@ -208,6 +208,19 @@ structure TrainConfig where
   warmupEpochs : Nat := 0
   augment      : Bool := false
   labelSmoothing : Float := 0.0
+  /-- DeiT-style data augmentation knobs. Setting `useMixup` or
+      `useCutmix` switches the train-step to the soft-label codegen
+      path; the dataloader produces a `[B, NC]` smoothed soft-label
+      tensor instead of an int32 `[B]` vector. `mixupAlpha` and
+      `cutmixAlpha` control the Beta-distribution shape; the paper
+      defaults are 0.8 and 1.0 respectively. `randomErasing` operates
+      on the int-label path (no soft-label conversion needed). -/
+  useMixup       : Bool  := false
+  mixupAlpha     : Float := 0.8
+  useCutmix      : Bool  := false
+  cutmixAlpha    : Float := 1.0
+  randomErasing  : Bool  := false
+  randomErasingProb : Float := 0.25
 deriving Repr
 
 inductive DatasetKind where

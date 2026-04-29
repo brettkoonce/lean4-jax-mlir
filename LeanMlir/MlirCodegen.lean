@@ -3100,6 +3100,7 @@ private def emitConvBnMomentum (p ic oc kSize : Nat) (applyWeightDecay : Bool :=
 /-- Emit the full train step (forward + loss + backward + SGD). -/
 private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : String)
     (labelSmoothing : Float := 0.1) (weightDecay : Float := 0.0001) (useAdam : Bool := true)
+    (useSoftLabels : Bool := false)
     : String := Id.run do
   let B := batchSize
   let nClasses := spec.numClasses
@@ -4048,16 +4049,24 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
   code := code ++ s!"    %log_s = stablehlo.log %sum_e : {tensorTy [B]}\n"
   code := code ++ s!"    %log_s_b = stablehlo.broadcast_in_dim %log_s, dims = [0] : ({tensorTy [B]}) -> {tensorTy [B, NC]}\n"
   code := code ++ s!"    %log_p = stablehlo.subtract %shifted, %log_s_b : {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %iota = stablehlo.iota dim = 1 : {tensorTy [B, NC]}".replace "xf32>" "xi32>"  ++ "\n"
-  code := code ++ s!"    %y_b = stablehlo.broadcast_in_dim %y, dims = [0] : ({tensorTy [B]}".replace "xf32>" "xi32>" ++ s!") -> {tensorTy [B, NC]}".replace "xf32>" "xi32>" ++ "\n"
-  let i1Ty := s!"tensor<{B}x{NC}xi1>"
-  code := code ++ s!"    %mask = stablehlo.compare EQ, %iota, %y_b : ({tensorTy [B, NC]}".replace "xf32>" "xi32>" ++ s!", {tensorTy [B, NC]}".replace "xf32>" "xi32>" ++ s!") -> {i1Ty}\n"
-  let smoothOn := if labelSmoothing > 0.0 then 1.0 - labelSmoothing + labelSmoothing / nClasses.toFloat else 1.0
-  let smoothOff := if labelSmoothing > 0.0 then labelSmoothing / nClasses.toFloat else 0.0
-  code := code ++ s!"    %onef = stablehlo.constant dense<{smoothOn}> : {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %zerof = stablehlo.constant dense<{smoothOff}> : {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %onehot = stablehlo.select %mask, %onef, %zerof : {i1Ty}, {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %weighted = stablehlo.multiply %log_p, %onehot : {tensorTy [B, NC]}\n"
+  -- `onehotSSA` is the smoothed/onehot label tensor used by both the loss
+  -- forward and the d_logits backward. Two construction paths:
+  --   * Soft-label path: caller passes a `%y_soft : [B, NC] f32` already
+  --     containing label smoothing + mixup/cutmix mixing.
+  --   * Int-label path (default): build %onehot from int32 %y on the fly,
+  --     applying label smoothing inline.
+  let onehotSSA : String := if useSoftLabels then "%y_soft" else "%onehot"
+  if !useSoftLabels then
+    code := code ++ s!"    %iota = stablehlo.iota dim = 1 : {tensorTy [B, NC]}".replace "xf32>" "xi32>"  ++ "\n"
+    code := code ++ s!"    %y_b = stablehlo.broadcast_in_dim %y, dims = [0] : ({tensorTy [B]}".replace "xf32>" "xi32>" ++ s!") -> {tensorTy [B, NC]}".replace "xf32>" "xi32>" ++ "\n"
+    let i1Ty := s!"tensor<{B}x{NC}xi1>"
+    code := code ++ s!"    %mask = stablehlo.compare EQ, %iota, %y_b : ({tensorTy [B, NC]}".replace "xf32>" "xi32>" ++ s!", {tensorTy [B, NC]}".replace "xf32>" "xi32>" ++ s!") -> {i1Ty}\n"
+    let smoothOn := if labelSmoothing > 0.0 then 1.0 - labelSmoothing + labelSmoothing / nClasses.toFloat else 1.0
+    let smoothOff := if labelSmoothing > 0.0 then labelSmoothing / nClasses.toFloat else 0.0
+    code := code ++ s!"    %onef = stablehlo.constant dense<{smoothOn}> : {tensorTy [B, NC]}\n"
+    code := code ++ s!"    %zerof = stablehlo.constant dense<{smoothOff}> : {tensorTy [B, NC]}\n"
+    code := code ++ s!"    %onehot = stablehlo.select %mask, %onef, %zerof : {i1Ty}, {tensorTy [B, NC]}\n"
+  code := code ++ s!"    %weighted = stablehlo.multiply %log_p, {onehotSSA} : {tensorTy [B, NC]}\n"
   code := code ++ s!"    %total = stablehlo.reduce(%weighted init: %zf) applies stablehlo.add across dimensions = [0, 1]\n"
   code := code ++ s!"           : ({tensorTy [B, NC]}, tensor<f32>) -> tensor<f32>\n"
   code := code ++ s!"    %Bc = stablehlo.constant dense<{B}.0> : tensor<f32>\n"
@@ -4073,7 +4082,7 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
   code := code ++ "    //     d_logits = (softmax(z) - onehot(y)) / B\n"
   code := code ++ s!"    %sum_e_b = stablehlo.broadcast_in_dim %sum_e, dims = [0] : ({tensorTy [B]}) -> {tensorTy [B, NC]}\n"
   code := code ++ s!"    %softmax = stablehlo.divide %exp_s, %sum_e_b : {tensorTy [B, NC]}\n"
-  code := code ++ s!"    %sm_moh = stablehlo.subtract %softmax, %onehot : {tensorTy [B, NC]}\n"
+  code := code ++ s!"    %sm_moh = stablehlo.subtract %softmax, {onehotSSA} : {tensorTy [B, NC]}\n"
   code := code ++ s!"    %Bc_nc = stablehlo.broadcast_in_dim %Bc, dims = [] : (tensor<f32>) -> {tensorTy [B, NC]}\n"
   code := code ++ s!"    %d_logits = stablehlo.divide %sm_moh, %Bc_nc : {tensorTy [B, NC]}\n"
 
@@ -5267,7 +5276,8 @@ private def emitTrainStepBody (spec : NetSpec) (batchSize : Nat) (_moduleName : 
   pure code
 
 /-- Emit the train_step function signature. -/
-private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.run do
+private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat)
+    (useSoftLabels : Bool := false) : String := Id.run do
   let B := batchSize
   let NC := spec.numClasses
   let inDim := inputFlatDim spec
@@ -6047,7 +6057,11 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
       params := params ++ s!"      %v_W{vpidx2}: {dTy}, %v_b{vpidx2}: {dTy},\n"
       vpidx2 := vpidx2 + 1
     | _ => pure ()
-  params := params ++ s!"      %x_flat: {tensorTy [B, inDim]}, %y: tensor<{B}xi32>,\n"
+  if useSoftLabels then
+    -- Soft-label path: caller passes a smoothed/mixed [B, NC] f32 tensor.
+    params := params ++ s!"      %x_flat: {tensorTy [B, inDim]}, %y_soft: {tensorTy [B, NC]},\n"
+  else
+    params := params ++ s!"      %x_flat: {tensorTy [B, inDim]}, %y: tensor<{B}xi32>,\n"
   params := params ++ "      %lr: tensor<f32>, %t: tensor<f32>"
   let mut retTypes := paramRetTypes ++ mRetTypes ++ vRetTypes |>.push "tensor<f32>"
   -- BN stats return types (mean + var per BN layer)
@@ -6056,16 +6070,20 @@ private def emitTrainStepSig (spec : NetSpec) (batchSize : Nat) : String := Id.r
     retTypes := retTypes.push (tensorTy [oc]) |>.push (tensorTy [oc])
   pure s!"  func.func @main(\n{params}\n    ) -> ({String.intercalate ", " retTypes.toList})"
 
-/-- Generate a full train_step MLIR module with VJPs. -/
+/-- Generate a full train_step MLIR module with VJPs. When `useSoftLabels`
+    is true, the function takes a `%y_soft : [B, NC] f32` tensor (mixup/
+    cutmix-style) instead of an int32 `%y : [B]` label vector; label
+    smoothing is then expected to be applied by the caller. -/
 def generateTrainStep (spec : NetSpec) (batchSize : Nat) (moduleName : String := "jit_train_step")
     (labelSmoothing : Float := 0.1) (weightDecay : Float := 0.0001) (useAdam : Bool := true)
+    (useSoftLabels : Bool := false)
     : String :=
   s!"// {spec.name} train_step — Generated by Lean 4 → MLIR (StableHLO + VJPs)\n" ++
   s!"// Batch size: {batchSize}, optimizer: {if useAdam then "Adam" else "SGD+momentum"}\n" ++
-  s!"// label_smoothing: {labelSmoothing}, weight_decay: {weightDecay}\n\n" ++
+  s!"// label_smoothing: {labelSmoothing}, weight_decay: {weightDecay}, soft_labels: {useSoftLabels}\n\n" ++
   s!"module @{moduleName} " ++ "{\n" ++
-  emitTrainStepSig spec batchSize ++ " {\n" ++
-  emitTrainStepBody spec batchSize moduleName labelSmoothing weightDecay useAdam ++
+  emitTrainStepSig spec batchSize useSoftLabels ++ " {\n" ++
+  emitTrainStepBody spec batchSize moduleName labelSmoothing weightDecay useAdam useSoftLabels ++
   "  }\n" ++
   "}\n"
 

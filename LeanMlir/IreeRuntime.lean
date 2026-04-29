@@ -74,6 +74,19 @@ opaque trainStepAdamF32
   (bnShapes : @& ByteArray)
   (batch : USize) : IO ByteArray
 
+/-- Soft-label variant: `ySoft` is a `[batch, nClasses]` f32 tensor
+    (smoothed + mixed). Routes to the codegen produced with
+    `useSoftLabels := true`. Used by the mixup/cutmix path. -/
+@[extern "lean_iree_train_step_adam_f32_softlabel"]
+opaque trainStepAdamF32Soft
+  (sess : @& IreeSession) (fnName : @& String)
+  (params : @& ByteArray) (shapes : @& ByteArray)
+  (x : @& ByteArray) (xShape : @& ByteArray)
+  (ySoft : @& ByteArray)
+  (lr : Float) (t : Float)
+  (bnShapes : @& ByteArray)
+  (batch : USize) (nClasses : USize) : IO ByteArray
+
 /-- Zero-copy f32 forward pass. Pushes x then param tensors, returns logits.
     For inference/eval — no y, lr, or velocity inputs. -/
 @[extern "lean_iree_forward_f32"]
