@@ -533,6 +533,9 @@ def vitTinyMixupConfig : TrainConfig :=
 def vitTinyCutmixConfig : TrainConfig :=
   { vitTinyBareConfig with useCutmix := true, cutmixAlpha := 1.0 }
 
+def vitTinyKnnMixupConfig : TrainConfig :=
+  { vitTinyBareConfig with useKnnMixup := true, knnMixupAlpha := 1.0 }
+
 -- "Full" = mixup XOR cutmix (paper convention picks one per batch);
 -- here we use mixup + RE since CutMix needs its own per-batch decision
 -- and our codegen path picks Mixup when both are flagged.
@@ -847,6 +850,7 @@ def ablations : List (String × AblationRun) := [
   ("vit-tiny-erase",       ⟨vitTinyAblationSpec, vitTinyEraseConfig,       .imagenette, "data/imagenette"⟩),
   ("vit-tiny-mixup",       ⟨vitTinyAblationSpec, vitTinyMixupConfig,       .imagenette, "data/imagenette"⟩),
   ("vit-tiny-cutmix",      ⟨vitTinyAblationSpec, vitTinyCutmixConfig,      .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-knn-mixup",   ⟨vitTinyAblationSpec, vitTinyKnnMixupConfig,    .imagenette, "data/imagenette"⟩),
   ("vit-tiny-full",        ⟨vitTinyAblationSpec, vitTinyFullConfig,        .imagenette, "data/imagenette"⟩),
   ("vit-tiny-ema",         ⟨vitTinyAblationSpec, vitTinyEmaConfig,         .imagenette, "data/imagenette"⟩),
   ("vit-tiny-swa",         ⟨vitTinyAblationSpec, vitTinySwaConfig,         .imagenette, "data/imagenette"⟩),

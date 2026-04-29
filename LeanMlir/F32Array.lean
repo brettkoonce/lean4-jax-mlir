@@ -125,6 +125,22 @@ opaque mixupSoftLabels (intLabels : @& ByteArray) (batch : USize) (nClasses : US
 opaque cutmixImages (images : @& ByteArray) (batch : USize) (channels : USize)
     (height : USize) (width : USize) (alpha : Float) (seed : USize) : IO ByteArray
 
+/-- KNN-Mixup — like Mixup but pair[i] is the nearest neighbor of i in
+    pixel-space L2 distance, not a random permutation. Mixes each sample
+    with its closest manifold sibling in the batch. Pair with
+    `knnMixupSoftLabels` using SAME images + seed + alpha. -/
+@[extern "lean_f32_knn_mixup_images"]
+opaque knnMixupImages (images : @& ByteArray) (batch : USize) (channels : USize)
+    (height : USize) (width : USize) (alpha : Float) (seed : USize) : IO ByteArray
+
+/-- KNN-Mixup soft labels. Needs the original images to recompute the
+    same KNN pairing the `_images` call used. -/
+@[extern "lean_f32_knn_mixup_soft_labels"]
+opaque knnMixupSoftLabels (intLabels : @& ByteArray) (images : @& ByteArray)
+    (batch : USize) (nClasses : USize) (channels : USize)
+    (height : USize) (width : USize) (alpha : Float) (smooth : Float)
+    (seed : USize) : IO ByteArray
+
 /-- Soft labels for CutMix. λ_actual is recomputed from rectangle area. -/
 @[extern "lean_f32_cutmix_soft_labels"]
 opaque cutmixSoftLabels (intLabels : @& ByteArray) (batch : USize) (nClasses : USize)

@@ -616,6 +616,96 @@ LEAN_EXPORT lean_obj_res lean_f32_cutmix_soft_labels(
 }
 
 // ----------------------------------------------------------------
+// KNN-Mixup: same as Mixup, but pair[i] is the nearest neighbor of i
+// in pixel-space L2 distance instead of a random permutation. Mixes
+// each sample with its closest sibling in the batch — the "manifold
+// neighbor" of i — producing harder, more realistic mixed images
+// than random Mixup. Pair with `knn_mixup_soft_labels` (same images,
+// same seed, same alpha).
+// ----------------------------------------------------------------
+static void f32_knn_pairing(size_t* pair, const float* in,
+                            size_t batch, size_t pixels) {
+    for (size_t i = 0; i < batch; i++) {
+        double best = 1e30; size_t best_j = (i + 1) % batch;
+        const float* a = in + i * pixels;
+        for (size_t j = 0; j < batch; j++) {
+            if (j == i) continue;
+            const float* b = in + j * pixels;
+            double d = 0.0;
+            for (size_t k = 0; k < pixels; k++) {
+                double v = (double)a[k] - (double)b[k];
+                d += v * v;
+                if (d > best) break;  // early termination
+            }
+            if (d < best) { best = d; best_j = j; }
+        }
+        pair[i] = best_j;
+    }
+}
+
+LEAN_EXPORT lean_obj_res lean_f32_knn_mixup_images(
+    b_lean_obj_arg images, size_t batch, size_t channels,
+    size_t height, size_t width, double alpha, size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t pixels = channels * height * width;
+    size_t nbytes = batch * pixels * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* in = (const float*)lean_sarray_cptr(images);
+    float* o = (float*)lean_sarray_cptr(out);
+    uint64_t s = seed ^ 0xa1b2c3d4e5f60718ULL; if (s == 0) s = 1;
+    double lambda = f32_beta_symmetric(alpha, &s);
+    if (lambda < 0.5) lambda = 1.0 - lambda;
+    size_t* pair = (size_t*)malloc(batch * sizeof(size_t));
+    f32_knn_pairing(pair, in, batch, pixels);
+    float l = (float)lambda;
+    float l1 = 1.0f - l;
+    for (size_t i = 0; i < batch; i++) {
+        const float* a = in + i * pixels;
+        const float* b = in + pair[i] * pixels;
+        float* d = o + i * pixels;
+        for (size_t k = 0; k < pixels; k++) d[k] = l * a[k] + l1 * b[k];
+    }
+    free(pair);
+    return lean_io_result_mk_ok(out);
+}
+
+// KNN-Mixup soft labels. Needs `images` to recompute the same KNN pairing
+// the matching `_images` call used. Same seed reproduces the same λ.
+LEAN_EXPORT lean_obj_res lean_f32_knn_mixup_soft_labels(
+    b_lean_obj_arg int_labels, b_lean_obj_arg images,
+    size_t batch, size_t n_classes, size_t channels,
+    size_t height, size_t width, double alpha, double smooth,
+    size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t pixels = channels * height * width;
+    size_t out_n = batch * n_classes;
+    size_t nbytes = out_n * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    float* o = (float*)lean_sarray_cptr(out);
+    const uint8_t* lbl = (const uint8_t*)lean_sarray_cptr(int_labels);
+    const float* in = (const float*)lean_sarray_cptr(images);
+    uint64_t s = seed ^ 0xa1b2c3d4e5f60718ULL; if (s == 0) s = 1;
+    double lambda = f32_beta_symmetric(alpha, &s);
+    if (lambda < 0.5) lambda = 1.0 - lambda;
+    size_t* pair = (size_t*)malloc(batch * sizeof(size_t));
+    f32_knn_pairing(pair, in, batch, pixels);
+    float l = (float)lambda;
+    float l1 = 1.0f - l;
+    for (size_t i = 0; i < batch; i++) {
+        int32_t y_a, y_b;
+        memcpy(&y_a, lbl + i * 4, 4);
+        memcpy(&y_b, lbl + pair[i] * 4, 4);
+        for (size_t c = 0; c < n_classes; c++) {
+            float a = f32_smooth_onehot(y_a, c, smooth, n_classes);
+            float b = f32_smooth_onehot(y_b, c, smooth, n_classes);
+            o[i * n_classes + c] = l * a + l1 * b;
+        }
+    }
+    free(pair);
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
 // EMA on squared values: out = (1-mom)*running + mom*batch².
 // Used by SWAG to maintain a running E[θ²] alongside SWA's running E[θ].
 // ----------------------------------------------------------------

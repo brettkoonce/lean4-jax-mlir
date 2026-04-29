@@ -219,6 +219,12 @@ structure TrainConfig where
   mixupAlpha     : Float := 0.8
   useCutmix      : Bool  := false
   cutmixAlpha    : Float := 1.0
+  /-- KNN-Mixup: pair each sample with its nearest neighbor in the batch
+      (pixel-space L2) rather than a random partner. Closer manifold
+      mixing → harder, more realistic intermediate samples. Mutually
+      exclusive with `useMixup`/`useCutmix` (KNN takes precedence). -/
+  useKnnMixup    : Bool  := false
+  knnMixupAlpha  : Float := 1.0
   randomErasing  : Bool  := false
   randomErasingProb : Float := 0.25
   /-- DeiT-style training-loop knobs that average weights for the eval

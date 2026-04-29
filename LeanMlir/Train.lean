@@ -89,8 +89,8 @@ def compileVmfbs (spec : NetSpec) (cfg : TrainConfig) : IO String := do
   let pfx := spec.buildPrefix
 
   IO.eprintln "Generating train step MLIR..."
-  -- Mixup / CutMix produce fractional labels; switch to the soft-label codegen.
-  let useSoftLabels := cfg.useMixup || cfg.useCutmix
+  -- Mixup / CutMix / KNN-Mixup produce fractional labels; switch to the soft-label codegen.
+  let useSoftLabels := cfg.useMixup || cfg.useCutmix || cfg.useKnnMixup
   let trainMlir := MlirCodegen.generateTrainStep spec cfg.batchSize ("jit_" ++ spec.sanitizedName ++ "_train_step")
     (labelSmoothing := cfg.labelSmoothing)
     (weightDecay := cfg.weightDecay)
@@ -334,7 +334,7 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
 
     let mut epochLoss : Float := 0.0
     let t0 ← IO.monoMsNow
-    let useSoftLabels := cfg.useMixup || cfg.useCutmix
+    let useSoftLabels := cfg.useMixup || cfg.useCutmix || cfg.useKnnMixup
     let nClassesNat := spec.numClasses
     -- Spatial dims used by mixup/cutmix/RE C kernels. For 4D NCHW
     -- post-augment shapes: imagenette is [b, 3, 224, 224]; cifar
@@ -357,9 +357,15 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
       -- DeiT-style aug. Random Erasing first (image-only).
       if cfg.randomErasing then
         xba ← F32.randomErasing xba batch augC.toUSize augH.toUSize augW.toUSize cfg.randomErasingProb stepSeed
-      -- Mixup XOR CutMix (paper convention: pick one per batch). Both
-      -- emit soft labels, switching the train-step path below.
-      if cfg.useMixup then
+      -- Mixup XOR CutMix XOR KNN-Mixup (paper convention: pick one per batch).
+      -- All three emit soft labels, switching the train-step path below.
+      -- KNN takes precedence over plain Mixup if both are set.
+      if cfg.useKnnMixup then
+        let mixSeed : USize := stepSeed ^^^ (3 : USize)
+        let xbaPre := xba
+        xba ← F32.knnMixupImages xbaPre batch augC.toUSize augH.toUSize augW.toUSize cfg.knnMixupAlpha mixSeed
+        yArg ← F32.knnMixupSoftLabels yb xbaPre batch nClassesNat.toUSize augC.toUSize augH.toUSize augW.toUSize cfg.knnMixupAlpha cfg.labelSmoothing mixSeed
+      else if cfg.useMixup then
         let mixSeed : USize := stepSeed ^^^ (1 : USize)
         xba ← F32.mixupImages xba batch augC.toUSize augH.toUSize augW.toUSize cfg.mixupAlpha mixSeed
         yArg ← F32.mixupSoftLabels yb batch nClassesNat.toUSize cfg.mixupAlpha cfg.labelSmoothing mixSeed
