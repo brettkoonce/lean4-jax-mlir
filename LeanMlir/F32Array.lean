@@ -138,4 +138,23 @@ opaque cutmixSoftLabels (intLabels : @& ByteArray) (batch : USize) (nClasses : U
 opaque randomErasing (images : @& ByteArray) (batch : USize) (channels : USize)
     (height : USize) (width : USize) (prob : Float) (seed : USize) : IO ByteArray
 
+/-- EMA on squared values: out = (1−mom)·running + mom·batch². Used by
+    SWAG to maintain a running E[θ²] alongside SWA's running E[θ]. -/
+@[extern "lean_f32_ema_sq"]
+opaque emaSq (running : @& ByteArray) (batch : @& ByteArray) (momentum : Float) : IO ByteArray
+
+/-- Element-wise subtract: a − b. Used by SWAG for per-epoch deviation
+    snapshots `p − swaMean`. -/
+@[extern "lean_f32_subtract"]
+opaque subtract (a : @& ByteArray) (b : @& ByteArray) : IO ByteArray
+
+/-- SWAG sample weights (Maddox et al. 2019). Given the SWA mean,
+    SWA-of-θ² (for diagonal variance), and the K most-recent per-epoch
+    deviation snapshots packed row-major as `K × nParams` f32, draw
+    one sample from the SWAG posterior `N(μ, ½Σ_diag + ½ Σ_low)`. -/
+@[extern "lean_f32_swag_sample"]
+opaque swagSample (swaMean : @& ByteArray) (swaSq : @& ByteArray)
+    (deviations : @& ByteArray) (nParams : USize) (k : USize)
+    (seed : USize) : IO ByteArray
+
 end F32

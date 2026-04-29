@@ -616,6 +616,89 @@ LEAN_EXPORT lean_obj_res lean_f32_cutmix_soft_labels(
 }
 
 // ----------------------------------------------------------------
+// EMA on squared values: out = (1-mom)*running + mom*batch².
+// Used by SWAG to maintain a running E[θ²] alongside SWA's running E[θ].
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_ema_sq(
+    b_lean_obj_arg running_ba, b_lean_obj_arg batch_ba,
+    double momentum, lean_obj_arg w) {
+    (void)w;
+    size_t n = lean_sarray_size(running_ba) / 4;
+    size_t nbytes = n * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* r = (const float*)lean_sarray_cptr(running_ba);
+    const float* b = (const float*)lean_sarray_cptr(batch_ba);
+    float* o = (float*)lean_sarray_cptr(out);
+    float mom = (float)momentum;
+    float omom = 1.0f - mom;
+    for (size_t i = 0; i < n; i++) {
+        float bi = b[i];
+        o[i] = omom * r[i] + mom * (bi * bi);
+    }
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
+// Element-wise subtract: out[i] = a[i] − b[i]. Used by SWAG to compute
+// per-epoch deviations `p − swaMean`.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_subtract(
+    b_lean_obj_arg a_ba, b_lean_obj_arg b_ba, lean_obj_arg w) {
+    (void)w;
+    size_t n = lean_sarray_size(a_ba) / 4;
+    size_t nbytes = n * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* a = (const float*)lean_sarray_cptr(a_ba);
+    const float* b = (const float*)lean_sarray_cptr(b_ba);
+    float* o = (float*)lean_sarray_cptr(out);
+    for (size_t i = 0; i < n; i++) o[i] = a[i] - b[i];
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
+// SWAG sample weights. Builds θ_s = swaMean + (1/√2)·√σ_diag·z₁
+//                                    + (1/√(2(K−1)))·D·z₂
+// where:
+//   σ_diag[i] = max(swaSq[i] − swaMean[i]², 0)   (clamped diagonal variance)
+//   D ∈ ℝ^{K × P} is the row-major flatten of the K most recent
+//   per-epoch deviations from swaMean (one row = one snapshot).
+//   z₁ ∈ ℝ^P, z₂ ∈ ℝ^K standard normal.
+// Reference: Maddox, Garipov, Izmailov, Vetrov, Wilson 2019.
+// ----------------------------------------------------------------
+LEAN_EXPORT lean_obj_res lean_f32_swag_sample(
+    b_lean_obj_arg swa_mean, b_lean_obj_arg swa_sq,
+    b_lean_obj_arg deviations,
+    size_t n_params, size_t k, size_t seed, lean_obj_arg w) {
+    (void)w;
+    size_t nbytes = n_params * 4;
+    lean_object* out = lean_alloc_sarray(1, nbytes, nbytes);
+    const float* mu = (const float*)lean_sarray_cptr(swa_mean);
+    const float* sq = (const float*)lean_sarray_cptr(swa_sq);
+    const float* d = (const float*)lean_sarray_cptr(deviations);
+    float* o = (float*)lean_sarray_cptr(out);
+    uint64_t s = seed ^ 0xd4e5f60718293a4bULL; if (s == 0) s = 1;
+    // Pre-sample z₂ ∈ ℝ^k (small, fits in stack).
+    float* z2 = (float*)malloc(k * sizeof(float));
+    for (size_t j = 0; j < k; j++) z2[j] = (float)f32_randn(&s);
+    float scale_low = (k > 1) ? (float)(1.0 / sqrt(2.0 * (double)(k - 1))) : 0.0f;
+    float scale_diag = (float)(1.0 / sqrt(2.0));
+    for (size_t i = 0; i < n_params; i++) {
+        float mean_i = mu[i];
+        float var_i = sq[i] - mean_i * mean_i;
+        if (var_i < 0.0f) var_i = 0.0f;
+        float z1 = (float)f32_randn(&s);
+        float low_dot = 0.0f;
+        for (size_t j = 0; j < k; j++) {
+            // d[j * n_params + i] = j-th deviation, parameter i.
+            low_dot += d[j * n_params + i] * z2[j];
+        }
+        o[i] = mean_i + scale_diag * sqrtf(var_i) * z1 + scale_low * low_dot;
+    }
+    free(z2);
+    return lean_io_result_mk_ok(out);
+}
+
+// ----------------------------------------------------------------
 // Random Erasing. Per-image, with probability `prob`, fills a random
 // rectangle (area 2-33% of image, aspect ratio 0.3-3.3) with N(0,1)
 // noise. Labels unchanged — caller can keep using int32 labels.

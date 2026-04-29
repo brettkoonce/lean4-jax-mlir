@@ -308,6 +308,11 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
   let mut emaParams : ByteArray := if cfg.useEMA then params else .empty
   let mut swaParams : ByteArray := if cfg.useSWA then params else .empty
   let mut swaCount  : Nat := 0
+  -- SWAG: extends SWA with running E[θ²] (for the diagonal of the
+  -- weight covariance) plus a circular buffer of the last `swagK`
+  -- per-epoch deviations from the SWA mean (the low-rank component).
+  let mut swaSqParams   : ByteArray := if cfg.useSWAG then params else .empty
+  let mut swagDeviations : Array ByteArray := #[]
 
   -- LEAN_MLIR_NO_SHUFFLE=1 disables per-epoch shuffling — used for
   -- phase-2/phase-3 cross-verification where both sides need to see
@@ -404,6 +409,14 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
     if cfg.useSWA && epoch >= cfg.swaStartEpoch then
       let mom : Float := 1.0 / (swaCount.toFloat + 1.0)
       swaParams ← F32.ema swaParams p mom
+      if cfg.useSWAG then
+        -- E[θ²] for the diagonal of the SWAG covariance.
+        swaSqParams ← F32.emaSq swaSqParams p mom
+        -- Push the deviation `p − swaParams` into the circular buffer.
+        let dev ← F32.subtract p swaParams
+        if swagDeviations.size >= cfg.swagK then
+          swagDeviations := swagDeviations.eraseIdx! 0
+        swagDeviations := swagDeviations.push dev
       swaCount := swaCount + 1
 
     if (epoch + 1) % 10 == 0 || epoch + 1 == epochs then
@@ -431,18 +444,75 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
         let evalParams := evalWeights.append runningBnStats
         let mut correct : Nat := 0
         let mut total : Nat := 0
+        let ttaM : Nat := if cfg.useTTA then cfg.ttaSamples else 1
+        let evalLabel2 := if cfg.useTTA then s!"{evalLabel}+TTA{ttaM}" else evalLabel
         for bi in [:evalSteps] do
-          let xba := F32.sliceImages valImg (bi * evalBatch) evalBatch dio.valPixels
-          let logits ← IreeSession.forwardF32 evalSess spec.evalFnName
-                          evalParams evalShapesBA xba evalXSh evalBatch.toUSize nClasses
+          let xbaRaw := F32.sliceImages valImg (bi * evalBatch) evalBatch dio.valPixels
+          -- TTA: average logits over M independently-augmented passes.
+          -- M=1 (the !cfg.useTTA path) reduces to a single deterministic
+          -- preprocess + forward, matching the prior behavior exactly.
+          let mut logitsAcc ← F32.const (evalBatch * spec.numClasses).toUSize 0.0
+          for k in [:ttaM] do
+            let xba ← if cfg.useTTA then
+                        dio.augmentBatch xbaRaw evalBatch.toUSize (epoch * 100000 + bi * 31 + k)
+                      else
+                        dio.preprocessBatch xbaRaw evalBatch.toUSize
+            let logits ← IreeSession.forwardF32 evalSess spec.evalFnName
+                            evalParams evalShapesBA xba evalXSh evalBatch.toUSize nClasses
+            let mom : Float := 1.0 / (k.toFloat + 1.0)
+            logitsAcc ← F32.ema logitsAcc logits mom
           let lblSlice := F32.sliceLabels valLbl (bi * evalBatch) evalBatch
           for i in [:evalBatch] do
-            let pred := F32.argmax10 logits (i * spec.numClasses).toUSize
+            let pred := F32.argmax10 logitsAcc (i * spec.numClasses).toUSize
             let label := lblSlice.data[i * 4]!.toNat
             if pred.toNat == label then correct := correct + 1
             total := total + 1
         let acc := correct.toFloat / total.toFloat * 100.0
-        IO.eprintln s!"  val accuracy ({evalLabel}): {correct}/{total} = {acc}%"
+        IO.eprintln s!"  val accuracy ({evalLabel2}): {correct}/{total} = {acc}%"
+
+  -- SWAG sample-and-average eval. Runs *after* the regular eval at
+  -- training's end so the comparison vs single-checkpoint accuracy is
+  -- visible side-by-side. Each sample draws θ_s ~ N(swaMean, Σ_SWAG)
+  -- from `swagSample`, replaces the param block, and runs forward;
+  -- logits are averaged per batch across `swagSamples`. Caveat: BN
+  -- running stats are stale relative to sampled weights — the same
+  -- caveat as EMA/SWA's eval block.
+  if cfg.useSWAG && swagDeviations.size > 0 then
+    let evalVmfb := s!"{pfx}_fwd_eval.vmfb"
+    if ← System.FilePath.pathExists evalVmfb then
+      let evalSess ← IreeSession.create evalVmfb
+      let (valImg, valLbl, nVal) ← dio.loadVal dataDir
+      let evalBatch := batchN
+      let evalSteps := nVal / evalBatch
+      let evalXSh := spec.xShape evalBatch
+      let evalShapesBA := spec.evalShapesBA
+      let concatDev := F32.concat swagDeviations
+      let nPUSize : USize := nP.toUSize
+      let kUSize : USize := swagDeviations.size.toUSize
+      let mut logitsAccs : Array ByteArray := #[]
+      for _ in [:evalSteps] do
+        logitsAccs := logitsAccs.push (← F32.const (evalBatch * spec.numClasses).toUSize 0.0)
+      for k in [:cfg.swagSamples] do
+        let sampledWeights ← F32.swagSample swaParams swaSqParams concatDev nPUSize kUSize (k * 7919 + 13).toUSize
+        let sampledEvalParams := sampledWeights.append runningBnStats
+        for bi in [:evalSteps] do
+          let xbaRaw := F32.sliceImages valImg (bi * evalBatch) evalBatch dio.valPixels
+          let xba ← dio.preprocessBatch xbaRaw evalBatch.toUSize
+          let logits ← IreeSession.forwardF32 evalSess spec.evalFnName
+                          sampledEvalParams evalShapesBA xba evalXSh evalBatch.toUSize nClasses
+          let mom : Float := 1.0 / (k.toFloat + 1.0)
+          logitsAccs := logitsAccs.set! bi (← F32.ema logitsAccs[bi]! logits mom)
+      let mut correct : Nat := 0
+      let mut total : Nat := 0
+      for bi in [:evalSteps] do
+        let lblSlice := F32.sliceLabels valLbl (bi * evalBatch) evalBatch
+        for i in [:evalBatch] do
+          let pred := F32.argmax10 logitsAccs[bi]! (i * spec.numClasses).toUSize
+          let label := lblSlice.data[i * 4]!.toNat
+          if pred.toNat == label then correct := correct + 1
+          total := total + 1
+      let acc := correct.toFloat / total.toFloat * 100.0
+      IO.eprintln s!"  val accuracy (SWAG×{cfg.swagSamples}): {correct}/{total} = {acc}%"
 
   IO.FS.writeBinFile s!"{pfx}_params.bin" p
   IO.FS.writeBinFile s!"{pfx}_bn_stats.bin" runningBnStats
@@ -450,6 +520,9 @@ def runTraining (spec : NetSpec) (cfg : TrainConfig) (ds : DatasetKind)
     IO.FS.writeBinFile s!"{pfx}_ema_params.bin" emaParams
   if cfg.useSWA then
     IO.FS.writeBinFile s!"{pfx}_swa_params.bin" swaParams
+  if cfg.useSWAG && swagDeviations.size > 0 then
+    IO.FS.writeBinFile s!"{pfx}_swa_sq_params.bin" swaSqParams
+    IO.FS.writeBinFile s!"{pfx}_swag_deviations.bin" (F32.concat swagDeviations)
   IO.eprintln "Saved params + BN stats."
 
 /-- End-to-end: compile all three vmfbs, load the train-step session,

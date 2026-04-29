@@ -557,6 +557,26 @@ def vitTinyCutmixEmaConfig : TrainConfig :=
 def vitTinyCutmixSwaConfig : TrainConfig :=
   { vitTinyCutmixConfig with useSWA := true, swaStartEpoch := 60 }
 
+-- SWAG (extends SWA with the diagonal+low-rank covariance) and TTA
+-- (M-pass augmented eval). Plus a "kitchen-sink" cell that stacks
+-- everything: CutMix + EMA + SWA + SWAG + TTA.
+
+def vitTinySwagConfig : TrainConfig :=
+  { vitTinyBareConfig with
+      useSWA := true, swaStartEpoch := 60,
+      useSWAG := true, swagK := 20, swagSamples := 30 }
+
+def vitTinyTtaConfig : TrainConfig :=
+  { vitTinyBareConfig with useTTA := true, ttaSamples := 5 }
+
+def vitTinyKitchenSinkConfig : TrainConfig :=
+  { vitTinyBareConfig with
+      useCutmix := true, cutmixAlpha := 1.0,
+      useEMA := true,
+      useSWA := true, swaStartEpoch := 60,
+      useSWAG := true, swagK := 20, swagSamples := 30,
+      useTTA := true, ttaSamples := 5 }
+
 -- ═══════════════════════════════════════════════════════════════════
 -- Chapter 9: ConvNeXt-Tiny on Imagenette — LayerNorm + GELU on a
 -- pure-CNN backbone. The "can a CNN still compete in 2022" answer
@@ -830,8 +850,11 @@ def ablations : List (String × AblationRun) := [
   ("vit-tiny-full",        ⟨vitTinyAblationSpec, vitTinyFullConfig,        .imagenette, "data/imagenette"⟩),
   ("vit-tiny-ema",         ⟨vitTinyAblationSpec, vitTinyEmaConfig,         .imagenette, "data/imagenette"⟩),
   ("vit-tiny-swa",         ⟨vitTinyAblationSpec, vitTinySwaConfig,         .imagenette, "data/imagenette"⟩),
-  ("vit-tiny-cutmix-ema",  ⟨vitTinyAblationSpec, vitTinyCutmixEmaConfig,  .imagenette, "data/imagenette"⟩),
-  ("vit-tiny-cutmix-swa",  ⟨vitTinyAblationSpec, vitTinyCutmixSwaConfig,  .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-swag",        ⟨vitTinyAblationSpec, vitTinySwagConfig,        .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-tta",         ⟨vitTinyAblationSpec, vitTinyTtaConfig,         .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-cutmix-ema",  ⟨vitTinyAblationSpec, vitTinyCutmixEmaConfig,   .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-cutmix-swa",  ⟨vitTinyAblationSpec, vitTinyCutmixSwaConfig,   .imagenette, "data/imagenette"⟩),
+  ("vit-tiny-kitchensink", ⟨vitTinyAblationSpec, vitTinyKitchenSinkConfig, .imagenette, "data/imagenette"⟩),
 
   -- Chapter 9: ConvNeXt-Tiny activation ablation (GELU vs ReLU, both
   -- with LN). The full paper recipe on Imagenette (224×224); a CIFAR

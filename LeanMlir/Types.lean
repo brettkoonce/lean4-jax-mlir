@@ -232,6 +232,22 @@ structure TrainConfig where
   /-- First epoch (zero-indexed) that contributes to the SWA average.
       Typical recipe: 0.75 × epochs, e.g. epoch 60 of 80. -/
   swaStartEpoch  : Nat   := 0
+  /-- SWAG (Maddox et al. 2019): extends SWA with diagonal Σ_diag (via
+      running mean of θ²) plus a low-rank component built from the last
+      `swagK` per-epoch deviations from the SWA mean. At eval, sample
+      `swagSamples` weight vectors from N(swaMean, ½Σ_diag + ½ Σ_low),
+      run forward each, average logits. Requires useSWA=true. -/
+  useSWAG        : Bool  := false
+  swagK          : Nat   := 20
+  swagSamples    : Nat   := 30
+  /-- TTA (test-time augmentation): at periodic eval, run `ttaSamples`
+      independently-augmented forwards per batch and average the logits.
+      Augmentations are the same dataloader pipeline used for training
+      (e.g. random crop + hflip for Imagenette), minus the soft-label
+      ones (mixup/cutmix) which need the label. Eval-only — no train
+      cost, M× eval cost. -/
+  useTTA         : Bool  := false
+  ttaSamples     : Nat   := 5
 deriving Repr
 
 inductive DatasetKind where
