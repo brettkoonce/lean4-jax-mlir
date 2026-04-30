@@ -3614,6 +3614,67 @@ MobileNet and EfficientNet also covers ViT; the same training
 recipe runs on all of them. What's different is the \emph{answer}
 you get, and why.
 
+\section{Data Augmentation}
+\label{sec:vit_aug_ablation}
+
+The ViT-Tiny config we just trained uses a bare base recipe ---
+random crop + hflip on the data side, no Mixup / CutMix /
+RandAugment / heavy weight decay. Holding architecture and base
+optimizer fixed, we can measure the marginal effect of each
+modern augmentation knob layered on top, on the same Imagenette
+data and 80-epoch budget.
+
+\begin{center}
+\begin{tabular}{l r r}
+\hline
+Cell                                & Val acc & $\Delta$ vs bare \\
+\hline
+\texttt{vit-tiny-cutmix-wd05}       & 77.43\% & $+5.7$ \\
+\texttt{vit-tiny-cutmix}            & 77.10\% & $+5.4$ \\
+\texttt{vit-tiny-mixup}             & 74.69\% & $+3.0$ \\
+\texttt{vit-tiny-recipe2}           & 74.41\% & $+2.7$ \\
+\texttt{vit-tiny-full}              & 74.23\% & $+2.5$ \\
+\texttt{vit-tiny-randaug} (M=9)     & 74.03\% & $+2.3$ \\
+\texttt{vit-tiny-randaug-m4} (M=4)  & 71.98\% & $+0.3$ \\
+\texttt{vit-tiny-bare}              & 71.70\% & ---     \\
+\texttt{vit-tiny-erase}             & 70.62\% & $-1.1$ \\
+\hline
+\end{tabular}
+\end{center}
+
+(\texttt{recipe2} = CutMix + Random Erasing + RandAugment-M9;
+\texttt{full} = Mixup + Random Erasing.)
+
+\begin{itemize}
+  \item \textbf{CutMix is the load-bearing knob.} +5.4\% over
+    bare. No close substitute; Mixup is a partial second at
+    +3.0\%.
+  \item \textbf{Stacking on top of CutMix gives near-zero
+    return.} CutMix + heavy WD adds $+0.3\%$, well within seed
+    noise. CutMix + RA + RE (\texttt{recipe2}) is \emph{negative}
+    ($-2.7\%$ vs CutMix alone): at 9.5K training images, piling
+    on more aug erodes the per-image class signal faster than
+    the diversity helps.
+  \item \textbf{Random Erasing alone hurts} ($-1.1\%$) at this
+    scale. Removing 2--33\% of pixels per image needs more
+    redundant signal elsewhere than a 9.5K-image dataset has.
+  \item \textbf{RandAugment magnitude matters.} M=9 (paper
+    default) works ($+2.3\%$). M=4 is essentially identity
+    ($+0.3\%$); too gentle to bite.
+\end{itemize}
+
+The reading for a small-data practitioner: pick one strong knob
+(CutMix) and stop. The reading for a large-data practitioner: the
+same table at 1.2M images would lift different rows --- the
+marginal effect of each knob is scale-dependent. The framing
+worth keeping is "marginal effect on top of what you already
+have," not the "stack everything" framing implicit in published
+paper recipes.
+
+One seed per cell. The 0.3\% delta between CutMix and
+CutMix+WD is below noise; the 5.4\% delta from CutMix is
+well above.
+
 \subsection*{What Part 1 has established}
 
 Every layer primitive shipped in Part 1's trainers (MLP,
