@@ -3176,14 +3176,7 @@ ConvNeXt-T       & 27.83M  & 790 KB   & 2030 ms   & 13.3 h   & 84.94\% \\
   \item \textbf{The architecture is fine, the recipe is the lever.}
     The 84.94\% number we land here vs the paper's 82.1\% top-1
     on ImageNet-1K is the same model getting different scores on
-    different datasets, not a code-correctness issue. (And, in
-    fact, this very chapter shipped with a $13$ hour ConvNeXt-T
-    run that initially \emph{appeared} to land at 10.8\% --- a
-    measurement bug in the eval pipeline that read pixels past
-    per-image bounds. Catching that bug required a separate eval
-    harness loaded from the saved checkpoint; the model was fine
-    all along. Worth keeping in mind for any chapter where a
-    surprising number shows up: re-eval before re-architect.)
+    different datasets, not a code-correctness issue.
 \end{itemize}
 
 \section{Data Augmentation}
