@@ -279,6 +279,12 @@ lean_exe «bestiary-highway» where
 lean_exe «bestiary-densenet» where
   root := `Bestiary.DenseNet
 
+lean_exe «bestiary-vgg» where
+  root := `Bestiary.VGG
+
+lean_exe «bestiary-resnet» where
+  root := `Bestiary.ResNet
+
 lean_exe «bestiary-mamba» where
   root := `Bestiary.Mamba
 
@@ -305,9 +311,6 @@ lean_exe «bestiary-muzero» where
 
 lean_exe «bestiary-mobilevit» where
   root := `Bestiary.MobileViT
-
-lean_exe «bestiary-convnext» where
-  root := `Bestiary.ConvNeXt
 
 lean_exe «bestiary-wavenet» where
   root := `Bestiary.WaveNet

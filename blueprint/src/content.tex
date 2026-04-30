@@ -4015,6 +4015,51 @@ def alexNet : NetSpec where
   ]
 \end{verbatim}
 
+\subsubsection*{VGG (\texttt{Bestiary/VGG.lean})}
+\emph{Zero} new primitives --- pure stacks of $3\times 3$ convs +
+max-pool + a heavy dense head. VGG (Simonyan \& Zisserman 2014,
+\href{https://arxiv.org/abs/1409.1556}{arXiv:1409.1556}) was the
+deep-CNN era's reference architecture for two years between AlexNet
+and ResNet. Its design philosophy reduced to one rule: ``always use
+$3\times 3$ kernels and add depth.'' Two stacked $3\times 3$s cover
+the receptive field of a $5\times 5$ with $\sim$30\% fewer params
+and an extra nonlinearity in the middle; three stacked $3\times 3$s
+match a $7\times 7$. The whole architecture is just \emph{that}
+trick repeated.
+
+Variants: VGG-16 (138M params, paper-exact) and VGG-19 (144M, paper
+144M), plus a CIFAR-sized fixture. The big numbers come almost
+entirely from the FC head: the first dense layer alone
+($7\times 7\times 512 \to 4096$) is $\sim$102M of the 138M. This is
+the dense-head bloat that GAP + single-FC heads (Network-in-Network
+2013, ResNet 2015) eventually fixed.
+
+\begin{verbatim}
+def vgg16 : NetSpec where
+  name   := "VGG-16"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .conv2d 3 64 3 .same .relu, .conv2d 64 64 3 .same .relu,    .maxPool 2 2,
+    .conv2d 64 128 3 .same .relu, .conv2d 128 128 3 .same .relu, .maxPool 2 2,
+    .conv2d 128 256 3 .same .relu, .conv2d 256 256 3 .same .relu,
+    .conv2d 256 256 3 .same .relu,                              .maxPool 2 2,
+    .conv2d 256 512 3 .same .relu, .conv2d 512 512 3 .same .relu,
+    .conv2d 512 512 3 .same .relu,                              .maxPool 2 2,
+    .conv2d 512 512 3 .same .relu, .conv2d 512 512 3 .same .relu,
+    .conv2d 512 512 3 .same .relu,                              .maxPool 2 2,
+    .flatten,
+    .dense (7 * 7 * 512) 4096 .relu,
+    .dense 4096 4096 .relu,
+    .dense 4096 1000 .identity
+  ]
+\end{verbatim}
+
+VGG-16 / VGG-19 still appear in production today as feature
+extractors (perceptual loss, style transfer) --- those FC features
+turn out to encode useful image structure even after the
+classification head was abandoned by everyone else.
+
 \subsubsection*{Highway Networks (\texttt{Bestiary/Highway.lean})}
 \emph{Zero} new math --- the architecture is built entirely from the
 product rule and additive fan-in (Chapter~\ref{chap:tensor}'s
@@ -4061,6 +4106,58 @@ some kind of bypass made very deep networks trainable; ResNet showed
 six months later that the gate could be a constant and you'd save the
 parameters. ResNet won by simplifying away $T$, but the underlying
 calculus is identical --- product + additive fan-in either way.
+
+\subsubsection*{ResNet (\texttt{Bestiary/ResNet.lean})}
+\emph{Zero} new primitives --- the \texttt{.bottleneckBlock}
+constructor is already in \texttt{Types.lean}. ResNet-34 (the basic-
+block variant) is in Chapter~\ref{chap:residual} of the book; this
+entry covers the deeper bottleneck variants
+\textbf{ResNet-50 / ResNet-101 / ResNet-152} (He et al.\ 2015,
+\href{https://arxiv.org/abs/1512.03385}{arXiv:1512.03385}). Each
+bottleneck block is $1\times 1$ reduce $\to$ $3\times 3$ work
+$\to$ $1\times 1$ expand around a residual skip --- three convs
+per block instead of basic-block's two, but the expensive
+$3\times 3$ now runs at $1/4$ the input channels, so per-block
+parameter count actually \emph{drops}.
+
+\begin{center}
+\begin{tabular}{l c r}
+\hline
+Name & Stage block counts & Params \\
+\hline
+ResNet-50  & (3, 4, 6, 3)  & 25.6M (paper 25.6M) \\
+ResNet-101 & (3, 4, 23, 3) & 44.5M (paper 44.5M) \\
+ResNet-152 & (3, 8, 36, 3) & 60.2M (paper 60.2M) \\
+\hline
+\end{tabular}
+\end{center}
+
+All three share the same stem ($7\times 7$ stride-2 conv +
+$3\times 3$ stride-2 max pool), the same 4-stage layout (channels
+$256 \to 512 \to 1024 \to 2048$), and the same GAP + single-FC
+head. They differ only in stage block-counts.
+
+\begin{verbatim}
+def resNet50 : NetSpec where
+  name   := "ResNet-50"
+  imageH := 224
+  imageW := 224
+  layers := [
+    .convBn 3 64 7 2 .same,
+    .maxPool 3 2,
+    .bottleneckBlock  64  256 3 1,             -- stage 1: 3 blocks
+    .bottleneckBlock 256  512 4 2,             -- stage 2: 4
+    .bottleneckBlock 512 1024 6 2,             -- stage 3: 6
+    .bottleneckBlock 1024 2048 3 2,            -- stage 4: 3
+    .globalAvgPool,
+    .dense 2048 1000 .identity
+  ]
+\end{verbatim}
+
+The same residual chain rule that's proven for ResNet-34 in
+Chapter~\ref{chap:residual} applies to bottleneck-block ResNets ---
+the bottleneck just composes three convolutions instead of two
+inside the residual branch. No new math.
 
 \subsubsection*{SqueezeNet (\texttt{Bestiary/SqueezeNet.lean})}
 \emph{Zero} new primitives --- the \texttt{.fireModule} constructor was
@@ -4315,35 +4412,6 @@ def mobileViTS : NetSpec where
     .conv2d 160 640 1 .same .relu,              -- 1×1 expansion
     .globalAvgPool,
     .dense 640 1000 .identity
-  ]
-\end{verbatim}
-
-\subsubsection*{ConvNeXt (\texttt{Bestiary/ConvNeXt.lean})}
-\emph{Two} new primitives (\S~\ref{layer:convNextStage},
-\S~\ref{layer:convNextDownsample}). ResNet-50 modernized with
-transformer design choices (Liu et al.\ 2022,
-\href{https://arxiv.org/abs/2201.03545}{arXiv:2201.03545}): 7$\times$7
-depthwise + inverted bottleneck + LN + GELU + separate inter-stage
-downsamples. Proof-by-construction that CNNs didn't need to die in
-2021. Variants: T (28M), S (50M), B (89M), L (198M), tiny fixture ---
-all matching the paper within 1\%.
-
-\begin{verbatim}
-def convNextT : NetSpec where
-  name   := "ConvNeXt-T"
-  imageH := 224
-  imageW := 224
-  layers := [
-    .convBn 3 96 4 4 .same,                     -- patchify stem: 4×4 stride 4
-    .convNextStage 96 3,                        -- stage 1: 3 blocks
-    .convNextDownsample 96 192,
-    .convNextStage 192 3,                       -- stage 2: 3 blocks
-    .convNextDownsample 192 384,
-    .convNextStage 384 9,                       -- stage 3: 9 blocks (the deep one)
-    .convNextDownsample 384 768,
-    .convNextStage 768 3,                       -- stage 4: 3 blocks
-    .globalAvgPool,
-    .dense 768 1000 .identity
   ]
 \end{verbatim}
 
