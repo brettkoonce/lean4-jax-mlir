@@ -1,8 +1,8 @@
 import Lake
 open Lake DSL
 
-package «lean4-jax» where
-  version := v!"0.1.0"
+package «lean4-mlir» where
+  version := v!"0.5.5"
   buildType := .release
 
 -- doc-gen4 is a conditional dependency only activated when the CI
