@@ -4220,27 +4220,40 @@ already in \texttt{Types.lean}. AlexNet-level accuracy in 1.25M params
 via the fire module (Iandola et al.\ 2016,
 \href{https://arxiv.org/abs/1602.07360}{arXiv:1602.07360}): squeeze 1$\times$1 conv followed by parallel
 expand 1$\times$1 + 3$\times$3 convs concatenated. The early
-efficiency-CNN family alongside MobileNet and ShuffleNet. Variants:
-SqueezeNet 1.0 (1.25M, paper-exact), 1.1 (1.24M --- earlier downsample),
-tiny fixture.
+efficiency-CNN family alongside MobileNet and ShuffleNet.
+
+\begin{center}
+\begin{tabular}{l c r}
+\hline
+Name           & Stem               & Params \\
+\hline
+SqueezeNet 1.0 & 7$\times$7 stride 2 (96 ch) & 1.25M \\
+SqueezeNet 1.1 & 3$\times$3 stride 2 (64 ch), earlier downsample & 1.24M \\
+\hline
+\end{tabular}
+\end{center}
+
+Both paper-exact, plus a tiny fixture. SqueezeNet 1.1 is the
+default for downstream use --- same accuracy at $\sim$2$\times$
+fewer FLOPs --- and is what the first book trained.
 
 \begin{verbatim}
-def squeezeNet1_0 : NetSpec where
-  name   := "SqueezeNet 1.0"
+def squeezeNet1_1 : NetSpec where
+  name   := "SqueezeNet 1.1"
   imageH := 224
   imageW := 224
   layers := [
-    .convBn 3 96 7 2 .same,                     -- stem
+    .convBn 3 64 3 2 .same,                     -- 3×3 stride-2 stem (vs 1.0's 7×7)
     .maxPool 2 2,
-    .fireModule 96  16 64  64,                  -- Fire2  → 128
+    .fireModule 64  16 64  64,                  -- Fire2  → 128
     .fireModule 128 16 64  64,                  -- Fire3
+    .maxPool 2 2,                               -- earlier downsample
     .fireModule 128 32 128 128,                 -- Fire4  → 256
-    .maxPool 2 2,
     .fireModule 256 32 128 128,                 -- Fire5
+    .maxPool 2 2,
     .fireModule 256 48 192 192,                 -- Fire6  → 384
     .fireModule 384 48 192 192,                 -- Fire7
     .fireModule 384 64 256 256,                 -- Fire8  → 512
-    .maxPool 2 2,
     .fireModule 512 64 256 256,                 -- Fire9
     .conv2d 512 1000 1 .same .relu,             -- 1×1 to classes
     .globalAvgPool                              -- GAP emits 1000 logits
