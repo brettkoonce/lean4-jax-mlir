@@ -4152,6 +4152,54 @@ Chapter~\ref{chap:residual} applies to bottleneck-block ResNets ---
 the bottleneck just composes three convolutions instead of two
 inside the residual branch. No new math.
 
+\subsubsection*{WRN (Wide ResNet) (\texttt{Bestiary/WRN.lean})}
+\emph{Zero} new primitives --- same \texttt{.residualBlock} as
+Chapter~\ref{chap:residual}, just widened. Zagoruyko \& Komodakis
+2016 (\href{https://arxiv.org/abs/1605.07146}{arXiv:1605.07146})
+take the ResNet block and turn the depth knob in (40 layers down
+from 1000+) and the width knob out (multiply every channel count
+by $k$, typically 2--10). Result: WRN-28-10 matches ResNet-1001 on
+CIFAR-10/100 with $\sim$25\% the params and half the training
+time. Width turned out to be a more efficient axis to scale than
+depth.
+
+\begin{center}
+\begin{tabular}{l c c r}
+\hline
+Name      & Depth & $k$  & Params \\
+\hline
+WRN-28-10 & 28    & 10   & 36.5M  \\
+WRN-40-2  & 40    & 2    &  2.2M  \\
+WRN-22-8  & 22    & 8    & 17.2M  \\
+\hline
+\end{tabular}
+\end{center}
+
+All paper-exact. The \texttt{N-k} naming follows the paper:
+$N$ is depth (must be $6n+4$ for some $n$ to balance the 3-stage
+design), $k$ is the widening factor that multiplies the
+$16 \to 32 \to 64$ channel sequence to $16k \to 32k \to 64k$.
+
+\begin{verbatim}
+def wrn28_10 : NetSpec where
+  name   := "WRN-28-10"
+  imageH := 32
+  imageW := 32
+  layers := [
+    .convBn 3 16 3 1 .same,                   -- stem
+    .residualBlock 16 160 4 1,                -- stage 1: 4 blocks @ 32×32
+    .residualBlock 160 320 4 2,               -- stage 2: 4 blocks @ 16×16
+    .residualBlock 320 640 4 2,               -- stage 3: 4 blocks @ 8×8
+    .globalAvgPool,
+    .dense 640 10 .identity
+  ]
+\end{verbatim}
+
+The paper also adds dropout between the two convs inside each
+residual block, which we omit (static-graph scope --- no per-step
+masks). The dropout-free WRN variant is also reported in the
+paper and lands within $\sim$0.3\% of the dropout one on CIFAR-10.
+
 \subsubsection*{SqueezeNet (\texttt{Bestiary/SqueezeNet.lean})}
 \emph{Zero} new primitives --- the \texttt{.fireModule} constructor was
 already in \texttt{Types.lean}. AlexNet-level accuracy in 1.25M params

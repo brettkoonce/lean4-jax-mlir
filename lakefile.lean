@@ -285,6 +285,9 @@ lean_exe «bestiary-vgg» where
 lean_exe «bestiary-resnet» where
   root := `Bestiary.ResNet
 
+lean_exe «bestiary-wrn» where
+  root := `Bestiary.WRN
+
 lean_exe «bestiary-mamba» where
   root := `Bestiary.Mamba
 
