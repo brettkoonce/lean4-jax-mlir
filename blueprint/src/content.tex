@@ -3763,7 +3763,7 @@ asymptote we don't approach.
 \section{Bestiary-only \texttt{Layer} primitives}
 \label{sec:bestiary_primitives}
 
-Twenty-four new \texttt{Layer} constructors were added by the bestiary chapters.
+Twenty-two new \texttt{Layer} constructors were added by the bestiary chapters.
 None are codegen-backed (MlirCodegen emits \texttt{// UNSUPPORTED}); the
 goal is pedagogical shape + parameter accounting, not training runs.
 
@@ -3902,27 +3902,6 @@ goal is pedagogical shape + parameter accounting, not training runs.
   The unfold/fold operations are \texttt{pdiv\_reindex}-style shape
   transformations; all the genuinely new math is already covered by
   the transformer proof chapter.
-\end{definition}
-
-\begin{definition}[ConvNeXt stage]
-  \label{layer:convNextStage}
-  \lean{Layer.convNextStage}
-  \leanok
-  ConvNeXt residual block $\times$ \texttt{nBlocks}: 7$\times$7 depthwise
-  conv $\to$ LayerNorm $\to$ 1$\times$1 expand (to $4c$) $\to$ GELU $\to$
-  1$\times$1 project (back to $c$) + residual. The transformer-era CNN
-  block (Liu et al.\ 2022). Does not include downsampling; see
-  \texttt{convNextDownsample}. Signature:
-  \texttt{convNextStage (channels nBlocks : Nat)}.
-\end{definition}
-
-\begin{definition}[ConvNeXt downsampling]
-  \label{layer:convNextDownsample}
-  \lean{Layer.convNextDownsample}
-  \leanok
-  Inter-stage spatial halving $+$ channel-doubling: LayerNorm $+$
-  2$\times$2 conv stride 2. Swin's \texttt{patchMerging} for CNNs.
-  Signature: \texttt{convNextDownsample (ic oc : Nat)}.
 \end{definition}
 
 \begin{definition}[WaveNet block]
