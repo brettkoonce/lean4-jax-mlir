@@ -2452,12 +2452,9 @@ pipelines, and it's what \texttt{TrainConfig.weightDecay} implements.
 
 \textbf{Augmentation}. Our pipeline does random crops ($256 \to 224$)
 and random horizontal flips on Imagenette; hflip only on CIFAR;
-nothing on MNIST. For a systematic modern treatment read
-\textbf{RandAugment} (Cubuk et al.\ 2020,
-\href{https://arxiv.org/abs/1909.13719}{arXiv:1909.13719}): sample $N$
-transforms from a fixed pool at a common magnitude $M$, tunable as
-two scalars. Indispensable at Imagenette's 9K-image scale. Lives in
-the data pipeline, not the network.
+nothing on MNIST. Lives in the data pipeline, not the network. We
+will explore data augmentation in chapters \ref{chap:layernorm}
+and \ref{chap:attention}.
 
 \textbf{Label smoothing} (Szegedy et al., 2016,
 \href{https://arxiv.org/abs/1512.00567}{arXiv:1512.00567}). Replaces
@@ -2489,7 +2486,7 @@ Run & Val accuracy & $\Delta$ vs full \\
 \hline
 Full recipe             & 90.29\% & --- \\
 Bare recipe (plain SGD + momentum, no other tricks) & 72.82\% & $-$17.47 \\
-Full minus augmentation & 82.71\% & $-$7.58 \\
+Full minus basic augmentation & 82.71\% & $-$7.58 \\
 Full minus cosine decay & 86.81\% & $-$3.48 \\
 Full minus Adam (vanilla SGD, lr 0.01) & 87.04\% & $-$3.25 \\
 Full minus warmup       & 88.88\% & $-$1.41 \\
