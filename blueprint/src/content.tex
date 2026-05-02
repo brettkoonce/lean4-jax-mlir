@@ -4152,9 +4152,7 @@ VGG-19  & (2, 2, 4, 4, 4)    & 143.7M \\
 
 All paper-exact. The big numbers come almost entirely from the FC
 head: the first dense layer alone ($7\times 7\times 512 \to 4096$)
-is $\sim$102M of the 138M for VGG-16. This is the dense-head bloat
-that GAP + single-FC heads (Network-in-Network 2013, ResNet 2015)
-eventually fixed.
+is $\sim$102M of the 138M for VGG-16.
 
 \begin{verbatim}
 def vgg16 : NetSpec where
@@ -4180,7 +4178,7 @@ def vgg16 : NetSpec where
 VGG-16 / VGG-19 still appear in production today as feature
 extractors (perceptual loss, style transfer) --- those FC features
 turn out to encode useful image structure even after the
-classification head was abandoned by everyone else.
+classification head fell out of favor.
 
 \subsubsection*{Highway Networks (\texttt{Bestiary/Highway.lean})}
 \emph{Zero} new math --- the architecture is built entirely from the
