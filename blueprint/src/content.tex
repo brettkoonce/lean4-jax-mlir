@@ -53,8 +53,6 @@ that runs. They agree, and the entire book is about understanding why.
 
 \section*{The thesis}
 
-Here's the punchline, stated up front so you know where we're headed.
-
 Backpropagation is \textbf{one operation} (the vector-Jacobian product),
 composed using \textbf{three rules}:
 
@@ -96,8 +94,7 @@ combination of these eight things. There is no ninth.
 I didn't set out to prove this. I set out to train a ResNet with
 verified gradients, and by the time I'd done it for enough architectures,
 the pattern became impossible to ignore. The framework kept working
-without needing new primitives. Once you see it, you can't unsee it,
-and the rest of the book is about making sure you see it.
+without needing new primitives.
 
 \section*{Who this book is for}
 
@@ -2368,8 +2365,7 @@ Epoch 80/80: loss=0.502586 lr=0.000000 (427151ms)
 Eighty epochs, about 425~seconds per epoch on the 7900 XTX ($\sim$7
 minutes), total wall time around \textbf{9.5 hours}. Final test
 accuracy \textbf{90.29\%} on Imagenette --- the going rate for
-scratch-trained ResNet-34 at this resolution and data size, and a
-gigantic step up from anything the MNIST or CIFAR chapters trained.
+scratch-trained ResNet-34 at this resolution and data size.
 
 Some numbers worth noticing:
 
