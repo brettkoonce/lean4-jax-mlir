@@ -94,7 +94,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Axiom | Max Error | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|-----------|--------|" >> $GITHUB_STEP_SUMMARY
-          python3 LeanMlir/Proofs/check_axioms.py 2>&1 | grep -E "PASS|FAIL" | while read line; do
+          python3 LeanMlir/Proofs/check_jacobians.py 2>&1 | grep -E "PASS|FAIL" | while read line; do
             status=$(echo "$line" | grep -o "PASS\|FAIL")
             name=$(echo "$line" | sed 's/.*: //' | sed 's/ *max_err.*//')
             err=$(echo "$line" | grep -o "max_err=[0-9.e+-]*" | sed 's/max_err=//')
@@ -104,7 +104,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Fail CI if gradient checks fail
-          python3 LeanMlir/Proofs/check_axioms.py
+          python3 LeanMlir/Proofs/check_jacobians.py
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Bestiary Entries" >> $GITHUB_STEP_SUMMARY

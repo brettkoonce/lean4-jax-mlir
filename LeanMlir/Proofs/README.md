@@ -195,7 +195,7 @@ framework subgradient conventions:
 These match the canonical Lean witness at smooth points and differ
 only at the kinks. The verification gap is intrinsic to backward
 passes through non-smooth ops — every ML framework lives with the
-same gap. The numerical FD checks in `check_axioms.py` and the
+same gap. The numerical FD checks in `check_jacobians.py` and the
 end-to-end oracles in `tests/vjp_oracle/` cover the codegen-emitted
 formula at the kinks.
 
@@ -221,7 +221,7 @@ Every layer's backward pass is one of:
 
 ## Numerical gradient checks
 
-`check_axioms.py` runs 25 finite-difference checks. They cover the
+`check_jacobians.py` runs 25 finite-difference checks. They cover the
 codegen-emitted backward formulas (where the trust gap actually
 lives — see "Codegen trust boundary" above), particularly at the
 ReLU and MaxPool kinks where the codegen substitutes a subgradient

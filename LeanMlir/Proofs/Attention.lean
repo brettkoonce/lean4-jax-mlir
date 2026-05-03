@@ -646,7 +646,7 @@ satisfies it. The current state is:
    described in §Q-correctness below.
 
 The concrete formulas are also numerically gradient-checked in
-`check_axioms.py` (`test_sdpa_back_Q/K/V`) for cross-validation.
+`check_jacobians.py` (`test_sdpa_back_Q/K/V`) for cross-validation.
 -/
 
 /-- `1 / sqrt(d)`, the SDPA scale factor. -/
@@ -953,7 +953,7 @@ The current state proves `mhsa_has_vjp_mat` end-to-end: we *define*
 via the new `pdivMat_colIndep` + `colSlabwise_has_vjp_mat` framework
 (Phase 3, Apr 2026), which lifts the per-head SDPA backward over the
 head axis. Formula remains numerically gradient-checked in
-`check_axioms.py` for cross-validation. -/
+`check_jacobians.py` for cross-validation. -/
 
 /-- Multi-head SDPA on a single sequence: `Mat N (heads·d_head) → Mat N (heads·d_head)`.
 

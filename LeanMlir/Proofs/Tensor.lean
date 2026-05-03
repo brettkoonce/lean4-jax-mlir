@@ -609,7 +609,7 @@ appear in scaled dot-product attention's backward pass:
    row function `g`.
 
 Each is a direct transcription of an elementary calculus fact. They are
-numerically gradient-checked in `check_axioms.py`. -/
+numerically gradient-checked in `check_jacobians.py`. -/
 
 /-- **Matmul Jacobian (left-const)** — theorem, derived from
     `pdiv_finset_sum` + `pdiv_mul` + `pdiv_const` + `pdiv_reindex`. -/

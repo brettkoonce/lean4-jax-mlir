@@ -5840,10 +5840,9 @@ Appendix~\ref{app:verification}).
 To also run the numerical gradient checks:
 
 \begin{verbatim}
-python3 LeanMlir/Proofs/check_axioms.py
+python3 LeanMlir/Proofs/check_jacobians.py
 \end{verbatim}
 
-(The script's name predates the axiom-count going to zero.)
 Every closed-form Jacobian formula in the suite has a
 finite-difference test that compares the formula against the
 numerical derivative. The check typically completes in under a
@@ -5943,9 +5942,8 @@ core (\texttt{propext}, \texttt{Classical.choice},
 
 \section{Finite-difference gradient checks}
 
-The script \texttt{LeanMlir/Proofs/check\_axioms.py} (the name
-predates the axiom-count going to zero) runs 25 finite-difference
-gradient checks. For each, it perturbs the input by
+The script \texttt{LeanMlir/Proofs/check\_jacobians.py} runs 25
+finite-difference gradient checks. For each, it perturbs the input by
 \(\varepsilon\), compares the claimed VJP against the centered
 difference
 \((f(x + \varepsilon) - f(x - \varepsilon)) / 2\varepsilon\), and

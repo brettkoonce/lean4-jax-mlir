@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Numerical gradient checks for every axiomatized VJP in the proof suite.
+"""Numerical gradient checks for every claimed Jacobian formula in the proof suite.
 
-For each axiom, we compute the Jacobian two ways:
+For each entry, we compute the Jacobian two ways:
   1. Finite differences: J[i,j] ≈ (f(x + εeⱼ) - f(x - εeⱼ)) / 2ε
-  2. The claimed formula from the axiom
+  2. The claimed formula from the proof
 
-If they agree to ~5 decimal places, the axiom's formula is correct
+If they agree to ~5 decimal places, the formula is correct
 (up to floating-point precision). This catches typos, sign errors,
 and off-by-one mistakes in the stated Jacobian formulas.
 
-Usage: python3 check_axioms.py
+Usage: python3 check_jacobians.py
 """
 import numpy as np
 

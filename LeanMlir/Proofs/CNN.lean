@@ -800,7 +800,7 @@ asserts existence of a correct backward for the flattened function;
 the user-facing `conv2d_weight_grad` wrapper does the flatten / unflatten
 housekeeping so callers see the natural `Kernel4` type.
 
-Numerical validation: `check_axioms.py:test_conv2d_weight_grad`
+Numerical validation: `check_jacobians.py:test_conv2d_weight_grad`
 gradient-checks the transpose-trick formula against finite differences. -/
 
 /-- **Conv2d weight-VJP** — proved from foundation rules.
@@ -1608,7 +1608,7 @@ Derived (not axioms):
 - `conv2d_weight_grad_has_vjp` — Phase 7: the weight-path VJP, bundled
   as a plain `HasVJP` on the Kernel4-flattened function. Numerically
   gradient-checked against the transpose-trick formula in
-  `check_axioms.py:test_conv2d_weight_grad`.
+  `check_jacobians.py:test_conv2d_weight_grad`.
 - `conv2d_bias_grad_has_vjp` — Phase 9: the bias-path VJP, same bundled
   `HasVJP` pattern. The closed-form "sum output cotangent over spatial
   dims per channel" is expressed as `conv2d_bias_grad_formula`; the

@@ -307,7 +307,7 @@ codegen (`MlirCodegen.lean`) emits the standard subgradient formula
 instead — `if x > 0 then dy else 0` for ReLU, argmax routing for
 max-pool. These match the canonical Lean witness at smooth points and
 differ at the kinks. The trust boundary is at codegen, not within Lean.
-The numerical FD checks in `check_axioms.py` (and the `vjp_oracle`
+The numerical FD checks in `check_jacobians.py` (and the `vjp_oracle`
 end-to-end tests) cover the codegen-emitted formula.
 ```
 
