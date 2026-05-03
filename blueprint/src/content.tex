@@ -689,11 +689,10 @@ function with a stated Jacobian, the current version defines it
 concretely and proves the weight, bias, and input gradient lemmas
 from the foundation. The same is true for multi-head SDPA, patch
 embedding, the BN inverse-stddev broadcast, GELU, the softmax
-Jacobian, and every transformer-level composition chain. The
-project axiom count is exactly \textbf{zero} ---
-\(\texttt{\#print axioms vit\_full\_has\_vjp}\) shows only Lean
+Jacobian, and every transformer-level composition chain. \(\texttt{\#print axioms vit\_full\_has\_vjp}\) returns only Lean
 core (\texttt{propext}, \texttt{Classical.choice},
-\texttt{Quot.sound}); see Appendix~\ref{app:verification} for
+\texttt{Quot.sound}); every other dependency is a Mathlib theorem
+or a derivation in this project. See Appendix~\ref{app:verification} for
 the full elimination history.
 
 The cost is mild: \(\Differentiable\) hypotheses propagate. The
@@ -866,13 +865,7 @@ If you're planning how much of the book to read, here's the
 per-chapter cost: new theorems (proven compositions Lean's
 typechecker verified) and new definitions (concrete operations
 the proofs unfold to). The totals across Chapters 2--10 are
-\textbf{81 numbered items (72 theorems + 9 definitions)}, with
-zero project axioms and zero \texttt{sorry}s.
-(Earlier drafts shipped 30 project axioms; the foundation flip
-plus two subsequent rounds of elimination retired all of them.
-Every project-level claim is now a theorem against Mathlib's
-\(\fderiv\) or a \texttt{noncomputable def} over the canonical
-pdiv-derived witness for non-smooth points.)
+\textbf{81 numbered items (72 theorems + 9 definitions)}.
 
 \textbf{Chapter 2 (You Are Here)} does the structural heavy lifting:
 27 theorems that compose Mathlib's \(\fderiv\) into the VJP
@@ -959,8 +952,7 @@ can look here and confirm where the count came from.
 One observation worth pulling out: \textbf{every chapter is pure
 composition.} Every primitive in every chapter either inherits
 from Mathlib's \(\fderiv\) or composes over previously-proved
-theorems --- no project-level axioms anywhere. The two non-smooth
-shortcuts that earlier drafts axiomatized
+theorems. The two non-smooth shortcuts that earlier drafts axiomatized
 (\(\texttt{relu\_has\_vjp}\) and \(\texttt{maxPool2\_has\_vjp3}\))
 are now \texttt{noncomputable def}s over the canonical
 pdiv-derived witness; the codegen substitutes the standard
@@ -5832,9 +5824,8 @@ lake build LeanMlir.Proofs.MLP LeanMlir.Proofs.CNN \
 \end{verbatim}
 
 If the build succeeds, every theorem in the proof suite type-checked
-against Lean's kernel --- that is the entire verification. Zero
-\texttt{sorry}s, zero project axioms, every VJP formula proved
-against Mathlib's \(\fderiv\) (see
+against Lean's kernel --- that is the entire verification. Every
+VJP formula is proved against Mathlib's \(\fderiv\) (see
 Appendix~\ref{app:verification}).
 
 To also run the numerical gradient checks:
@@ -5950,8 +5941,8 @@ difference
 asserts agreement within tolerance (typical max-error
 \(\sim 10^{-11}\) at \(\varepsilon = 10^{-5}\) in float64).
 
-With zero project axioms, every FD check is now a
-belt-and-suspenders pass over a \emph{proved} Jacobian theorem.
+Every FD check is a belt-and-suspenders pass over a
+\emph{proved} Jacobian theorem.
 The proofs already establish that each formula equals
 \(\fderiv\) at the relevant points; the FD checks confirm
 the formulas-as-written agree numerically with what the function
@@ -6046,9 +6037,9 @@ the same way.
 Together, the four layers catch four different kinds of bugs:
 
 \begin{itemize}
-  \item \textbf{Formal proofs} fail if the math is wrong. With
-    zero project axioms, every theorem reduces to Mathlib's
-    \(\fderiv\) and Lean core; the trust kernel is exactly
+  \item \textbf{Formal proofs} fail if the math is wrong. Every
+    theorem reduces to Mathlib's \(\fderiv\) and Lean core; the
+    trust kernel is exactly
     \texttt{propext}, \texttt{Classical.choice},
     \texttt{Quot.sound}, plus what Mathlib proves about
     \(\fderiv\). Type-checking can't catch the prose narrating
